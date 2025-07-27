@@ -1,0 +1,98 @@
+import React from 'react';
+
+function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed }) {
+  const menuItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: '📊' },
+    { id: 'conductores', label: 'Conductores', icon: '👨‍💼' },
+    { id: 'reportes', label: 'Reportes', icon: '📈' },
+    { id: 'vouchers', label: 'Vouchers', icon: '🧾' }
+  ];
+
+  return (
+    <div style={{
+      width: isCollapsed ? '70px' : '250px',
+      background: '#1f2937',
+      color: 'white',
+      padding: '20px 0',
+      transition: 'width 0.3s ease',
+      display: 'flex',
+      flexDirection: 'column'
+    }}>
+      {/* Header */}
+      <div style={{
+        padding: '0 20px',
+        marginBottom: '30px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between'
+      }}>
+        {!isCollapsed && (
+          <h2 style={{ 
+            margin: 0, 
+            fontSize: '24px', 
+            fontWeight: 'bold',
+            color: '#f9fafb'
+          }}>
+            SYSTEMTAXI
+          </h2>
+        )}
+        <button
+          onClick={() => setIsCollapsed(!isCollapsed)}
+          style={{
+            background: 'none',
+            border: 'none',
+            color: 'white',
+            fontSize: '20px',
+            cursor: 'pointer',
+            padding: '5px',
+            borderRadius: '4px'
+          }}
+        >
+          {isCollapsed ? '→' : '←'}
+        </button>
+      </div>
+
+      {/* Menu Items */}
+      <nav style={{ flex: 1 }}>
+        {menuItems.map((item) => (
+          <div
+            key={item.id}
+            onClick={() => setActiveSection(item.id)}
+            style={{
+              padding: '15px 20px',
+              cursor: 'pointer',
+              background: activeSection === item.id ? '#374151' : 'transparent',
+              borderLeft: activeSection === item.id ? '4px solid #3b82f6' : '4px solid transparent',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '15px',
+              transition: 'all 0.2s ease'
+            }}
+            onMouseEnter={(e) => {
+              if (activeSection !== item.id) {
+                e.target.style.background = '#374151';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (activeSection !== item.id) {
+                e.target.style.background = 'transparent';
+              }
+            }}
+          >
+            <span style={{ fontSize: '20px' }}>{item.icon}</span>
+            {!isCollapsed && (
+              <span style={{ 
+                fontSize: '16px',
+                fontWeight: activeSection === item.id ? 'bold' : 'normal'
+              }}>
+                {item.label}
+              </span>
+            )}
+          </div>
+        ))}
+      </nav>
+    </div>
+  );
+}
+
+export default Sidebar; 
