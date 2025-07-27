@@ -449,6 +449,8 @@ function TaxiForm() {
    const [editandoViaje, setEditandoViaje] = useState(null);
    const [tiempoEdit, setTiempoEdit] = useState('');
    const [unidadEdit, setUnidadEdit] = useState('');
+   const [pedidosDisponibles, setPedidosDisponibles] = useState([]);
+   const [cargandoPedidosDisp, setCargandoPedidosDisp] = useState(false);
 
 
   useEffect(() => {
@@ -469,59 +471,69 @@ function TaxiForm() {
     };
   }, []);
 
-  // Cargar viajes asignados
+  // Cargar viajes asignados y pedidos disponibles
   useEffect(() => {
     cargarViajesAsignados();
+    cargarPedidosDisponibles();
   }, []);
 
   const cargarViajesAsignados = async () => {
     setCargandoViajes(true);
     try {
-      // Consultar viajes tanto manuales como de aplicación
-      const qManual = query(
-        collection(db, 'ViajesAsignados'),
-        where('modoSeleccion', '==', 'manual')
-      );
-      const qAplicacion = query(
-        collection(db, 'ViajesAsignados'),
-        where('modoSeleccion', '==', 'aplicacion')
-      );
-      
-      const [manualSnapshot, aplicacionSnapshot] = await Promise.all([
-        getDocs(qManual),
-        getDocs(qAplicacion)
-      ]);
-      
-      const viajesManual = manualSnapshot.docs.map(doc => ({
+      // Leer todos los pedidos disponibles
+      const q = query(collection(db, 'pedidosDisponibles'));
+      const querySnapshot = await getDocs(q);
+      const pedidos = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
-      
-      const viajesAplicacion = aplicacionSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      // Combinar ambos tipos de viajes
-      const todosLosViajes = [...viajesManual, ...viajesAplicacion];
       
       // Ordenar por fecha de creación más reciente primero
-      todosLosViajes.sort((a, b) => {
-        if (a.timestamp && b.timestamp) {
-          return b.timestamp.toDate() - a.timestamp.toDate();
+      pedidos.sort((a, b) => {
+        if (a.fecha && b.fecha) {
+          const fechaA = new Date(a.fecha);
+          const fechaB = new Date(b.fecha);
+          return fechaB - fechaA;
         }
         return 0;
       });
       
-      setViajesAsignados(todosLosViajes);
+      setViajesAsignados(pedidos);
     } catch (error) {
-      console.error('Error al cargar viajes asignados:', error);
+      console.error('Error al cargar pedidos:', error);
     } finally {
       setCargandoViajes(false);
     }
   };
 
-
+  // Cargar pedidos disponibles
+  const cargarPedidosDisponibles = async () => {
+    setCargandoPedidosDisp(true);
+    try {
+      const q = query(collection(db, 'pedidosDisponibles'));
+      const querySnapshot = await getDocs(q);
+      const pedidos = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Ordenar por fecha de creación más reciente primero
+      pedidos.sort((a, b) => {
+        if (a.fecha && b.fecha) {
+          const fechaA = new Date(a.fecha);
+          const fechaB = new Date(b.fecha);
+          return fechaB - fechaA;
+        }
+        return 0;
+      });
+      
+      setPedidosDisponibles(pedidos);
+    } catch (error) {
+      console.error('Error al cargar pedidos disponibles:', error);
+    } finally {
+      setCargandoPedidosDisp(false);
+    }
+  };
 
   const buscarUsuario = async (numeroTelefono) => {
     if (numeroTelefono.length < 7) {
@@ -631,40 +643,56 @@ function TaxiForm() {
     setMapaVisible(false); // Oculta el mapa
   };
 
-     // Función para insertar viaje pendiente (sin tiempo ni unidad)
+     // Función para insertar pedido disponible
    const handleInsertarViajePendiente = async () => {
      try {
-       const fecha = new Date().toLocaleString('es-EC');
-       const viajeData = {
-         // Datos del cliente/viaje
-         telefono: telefono || '',
+       const fecha = new Date().toISOString().replace('T', ' ').substring(0, 19);
+       const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
+       
+       const pedidoData = {
+         // Estructura basada en tu colección pedidosDisponibles
+         clave: clave,
+         codigo: nombre || '',
          nombreCliente: nombre || '',
+         telefono: telefono || '',
          direccion: direccion || '',
-         coordenadas: coordenadas || '',
-         tiempo: '', // Vacío para editar después
-         numeroUnidad: '', // Vacío para editar después
-         modoSeleccion: 'manual',
-         fechaCreacion: fecha,
-         timestamp: new Date(),
-         estado: 'Pendiente', // Estado pendiente de asignación
-         envio: telefono.length === 7, // TRUE si tiene 7 dígitos, FALSE si es superior
-         conductor: null // Sin conductor asignado aún
+         destino: '', // Se puede editar después
+         fecha: fecha,
+         estado: 'Disponible',
+         idConductor: 'Sin asignar',
+         latitud: coordenadas ? coordenadas.split(',')[0] : '',
+         longitud: coordenadas ? coordenadas.split(',')[1] : '',
+         latitudDestino: '',
+         longitudDestino: '',
+         sector: '', // Se puede editar después
+         tipoPedido: 'ok',
+         valor: 'Central',
+         central: true,
+         coorporativo: false,
+         llegue: false,
+         pedido: 'Disponible',
+         puerto: '3020',
+         randon: clave,
+         rango: '2',
+         viajes: '',
+         foto: '0'
        };
 
-       // Guardar en la colección "ViajesAsignados"
-       await addDoc(collection(db, 'ViajesAsignados'), viajeData);
+       // Guardar en la colección "pedidosDisponibles"
+       await addDoc(collection(db, 'pedidosDisponibles'), pedidoData);
        
-       // Recargar la tabla de viajes asignados
+       // Recargar las tablas
        cargarViajesAsignados();
+       cargarPedidosDisponibles();
        
        setModal({ 
          open: true, 
          success: true, 
-         message: '¡Viaje registrado como pendiente!\nPuedes asignar tiempo y unidad desde la tabla.' 
+         message: '¡Pedido registrado exitosamente!\nPuedes editarlo desde la tabla de pedidos disponibles.' 
        });
      } catch (error) {
-       console.error('Error al registrar el viaje pendiente:', error);
-       setModal({ open: true, success: false, message: 'Error al registrar el viaje pendiente.' });
+       console.error('Error al registrar el pedido:', error);
+       setModal({ open: true, success: false, message: 'Error al registrar el pedido.' });
      }
    };
 
@@ -697,46 +725,49 @@ function TaxiForm() {
       // Obtener datos del conductor
       const conductorData = conductoresSnapshot.docs[0].data();
       
-             const fecha = new Date().toLocaleString('es-EC');
-       const viajeData = {
-         // Datos del cliente/viaje
-         telefono: telefono || '',
-         nombreCliente: nombre || '',
-         direccion: direccion || '',
-         coordenadas: coordenadas || '',
-         tiempo: tiempo,
-         numeroUnidad: unidad,
-         modoSeleccion: 'manual',
-         fechaCreacion: fecha,
-         timestamp: new Date(),
-         estado: 'Asignado',
-         envio: telefono.length === 7, // TRUE si tiene 7 dígitos, FALSE si es superior
-        
-        // Datos del conductor
-        conductor: {
-          cedula: conductorData.cedula || '',
-          color: conductorData.color || '',
-          correo: conductorData.correo || '',
-          estatus: conductorData.estatus || false,
-          foto: conductorData.foto || '',
-          id: conductorData.id || '',
-          latitudConductor: conductorData.latitudConductor || 0,
-          longitudConductor: conductorData.longitudConductor || 0,
-          nombreConductor: conductorData.nombre || '',
-          ocupado: conductorData.ocupado || false,
-          placa: conductorData.placa || '',
-          saldo: conductorData.saldo || 0,
-          telefonoConductor: conductorData.telefono || '',
-          token: conductorData.token || '',
-          unidad: conductorData.unidad || ''
-        }
-      };
-
-             // Guardar en la colección "ViajesAsignados"
-       await addDoc(collection(db, 'ViajesAsignados'), viajeData);
+       const fecha = new Date().toISOString().replace('T', ' ').substring(0, 19);
+       const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
        
-       // Recargar la tabla de viajes asignados
+       const pedidoData = {
+         // Estructura basada en tu colección pedidosDisponibles
+         clave: clave,
+         codigo: nombre || '',
+         nombreCliente: nombre || '',
+         telefono: telefono || '',
+         direccion: direccion || '',
+         destino: '', // Se puede editar después
+         fecha: fecha,
+         estado: 'Asignado',
+         idConductor: conductorData.id || '',
+         latitud: coordenadas ? coordenadas.split(',')[0] : '',
+         longitud: coordenadas ? coordenadas.split(',')[1] : '',
+         latitudDestino: '',
+         longitudDestino: '',
+         sector: '', // Se puede editar después
+         tipoPedido: 'ok',
+         valor: 'Central',
+         central: true,
+         coorporativo: false,
+         llegue: false,
+         pedido: 'Asignado',
+         puerto: '3020',
+         randon: clave,
+         rango: '2',
+         viajes: '',
+         foto: '0',
+         // Información del conductor
+         nombreConductor: conductorData.nombre || '',
+         placa: conductorData.placa || '',
+         numeroUnidad: unidad,
+         tiempo: tiempo
+       };
+
+       // Guardar en la colección "pedidosDisponibles"
+       await addDoc(collection(db, 'pedidosDisponibles'), pedidoData);
+       
+       // Recargar las tablas
        cargarViajesAsignados();
+       cargarPedidosDisponibles();
        
        setModal({ 
          open: true, 
@@ -788,42 +819,29 @@ function TaxiForm() {
        const conductorData = conductoresSnapshot.docs[0].data();
 
        // Actualizar el documento en Firestore
-       const viajeRef = doc(db, 'ViajesAsignados', viajeId);
-       await updateDoc(viajeRef, {
+       const pedidoRef = doc(db, 'pedidosDisponibles', viajeId);
+       await updateDoc(pedidoRef, {
          tiempo: tiempoEdit,
          numeroUnidad: unidadEdit,
          estado: 'Asignado',
-         conductor: {
-           cedula: conductorData.cedula || '',
-           color: conductorData.color || '',
-           correo: conductorData.correo || '',
-           estatus: conductorData.estatus || false,
-           foto: conductorData.foto || '',
-           id: conductorData.id || '',
-           latitudConductor: conductorData.latitudConductor || 0,
-           longitudConductor: conductorData.longitudConductor || 0,
-           nombreConductor: conductorData.nombre || '',
-           ocupado: conductorData.ocupado || false,
-           placa: conductorData.placa || '',
-           saldo: conductorData.saldo || 0,
-           telefonoConductor: conductorData.telefono || '',
-           token: conductorData.token || '',
-           unidad: conductorData.unidad || ''
-         }
+         idConductor: conductorData.id || '',
+         nombreConductor: conductorData.nombre || '',
+         placa: conductorData.placa || ''
        });
 
-       // Cancelar edición y recargar tabla
+       // Cancelar edición y recargar tablas
        cancelarEdicionViaje();
        cargarViajesAsignados();
+       cargarPedidosDisponibles();
        
        setModal({ 
          open: true, 
          success: true, 
-         message: `¡Viaje asignado exitosamente!\nConductor: ${conductorData.nombre}\nUnidad: ${unidadEdit}\nPlaca: ${conductorData.placa}` 
+         message: `¡Pedido asignado exitosamente!\nConductor: ${conductorData.nombre}\nUnidad: ${unidadEdit}\nPlaca: ${conductorData.placa}` 
        });
      } catch (error) {
-       console.error('Error al actualizar el viaje:', error);
-       setModal({ open: true, success: false, message: 'Error al actualizar el viaje.' });
+       console.error('Error al actualizar el pedido:', error);
+       setModal({ open: true, success: false, message: 'Error al actualizar el pedido.' });
      }
    };
 
@@ -889,28 +907,18 @@ function TaxiForm() {
         headers: { 'content-type': 'application/json' }
       });
 
-      // También guardar en ViajesAsignados para que aparezca en la tabla
-      const viajeData = {
-        // Datos del cliente/viaje
-        telefono: telefono || '',
-        nombreCliente: nombre || '',
-        direccion: direccion || '',
-        coordenadas: coordenadas || '',
-        tiempo: '', // Vacío inicialmente para aplicación
-        numeroUnidad: '', // Vacío inicialmente para aplicación
-        modoSeleccion: 'aplicacion', // Identificar como viaje de aplicación
-        fechaCreacion: fecha,
-        timestamp: new Date(),
-        estado: 'Pendiente', // Estado pendiente hasta asignación
-        envio: telefono.length === 7, // TRUE si tiene 7 dígitos, FALSE si es superior
-        conductor: null // Sin conductor asignado aún
+      // También guardar en pedidosDisponibles para que aparezca en la tabla
+      const pedidoData = {
+        ...data, // Usar la misma estructura que se envía a la API
+        modoSeleccion: 'aplicacion' // Identificar como pedido de aplicación
       };
 
-      // Guardar en la colección "ViajesAsignados"
-      await addDoc(collection(db, 'ViajesAsignados'), viajeData);
+      // Guardar en la colección "pedidosDisponibles"
+      await addDoc(collection(db, 'pedidosDisponibles'), pedidoData);
       
-      // Recargar la tabla de viajes asignados
+      // Recargar las tablas
       cargarViajesAsignados();
+      cargarPedidosDisponibles();
 
       setModal({ open: true, success: true, message: '¡Viaje registrado exitosamente!' });
     } catch (error) {
@@ -1368,7 +1376,7 @@ function TaxiForm() {
         </div>
       )}
 
-              {/* Tabla de ViajesAsignados */}
+              {/* Tabla de Pedidos (Principal) */}
       <div style={{
         marginTop: 30,
         background: '#fff',
@@ -1392,7 +1400,7 @@ function TaxiForm() {
             alignItems: 'center',
             gap: 10
           }}>
-            🚗 ViajesAsignados
+            🚗 Pedidos Registrados
             <span style={{
               background: 'rgba(255,255,255,0.2)',
               padding: '4px 12px',
@@ -1439,10 +1447,10 @@ function TaxiForm() {
           }}>
             <div style={{ fontSize: 48, marginBottom: 10 }}>📋</div>
             <div style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 5 }}>
-              No hay viajes asignados
+              No hay pedidos registrados
             </div>
             <div style={{ fontSize: 14 }}>
-              Los viajes aparecerán aquí cuando uses el modo manual
+              Los pedidos aparecerán aquí cuando se registren desde el formulario
             </div>
           </div>
         ) : (
@@ -1551,7 +1559,13 @@ function TaxiForm() {
                         fontSize: 12,
                         fontWeight: 'bold'
                       }}>
-                        {viaje.fechaCreacion ? viaje.fechaCreacion.split(', ')[1] || viaje.fechaCreacion : '-'}
+                        {viaje.fecha ? 
+                          new Date(viaje.fecha).toLocaleDateString('es-EC') + ' ' +
+                          new Date(viaje.fecha).toLocaleTimeString('es-EC', {
+                            hour: '2-digit',
+                            minute: '2-digit'
+                          })
+                          : '-'}
                       </td>
                      <td style={{
                        padding: '12px 16px',
@@ -1676,6 +1690,302 @@ function TaxiForm() {
         )}
       </div>
 
+      {/* Tabla de Pedidos Disponibles */}
+      <div style={{
+        marginTop: 40,
+        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+        borderRadius: 16,
+        padding: 24,
+        boxShadow: '0 8px 32px rgba(0,0,0,0.12)'
+      }}>
+        <div style={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          marginBottom: 20,
+          color: 'white'
+        }}>
+          <h3 style={{
+            margin: 0,
+            fontSize: 20,
+            fontWeight: 'bold',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 10
+          }}>
+            📋 Pedidos Disponibles
+            <span style={{
+              background: 'rgba(255,255,255,0.2)',
+              padding: '4px 12px',
+              borderRadius: 20,
+              fontSize: 14,
+              fontWeight: 'normal'
+            }}>
+              {pedidosDisponibles.length} pedidos
+            </span>
+          </h3>
+          <button
+            onClick={cargarPedidosDisponibles}
+            disabled={cargandoPedidosDisp}
+            style={{
+              background: 'rgba(255,255,255,0.2)',
+              border: 'none',
+              color: 'white',
+              padding: '8px 16px',
+              borderRadius: 8,
+              cursor: cargandoPedidosDisp ? 'not-allowed' : 'pointer',
+              fontSize: 14,
+              fontWeight: 'bold',
+              opacity: cargandoPedidosDisp ? 0.7 : 1
+            }}
+          >
+            {cargandoPedidosDisp ? '🔄 Cargando...' : '🔄 Actualizar'}
+          </button>
+        </div>
+
+        {cargandoPedidosDisp ? (
+          <div style={{
+            padding: 40,
+            textAlign: 'center',
+            color: '#666'
+          }}>
+            <div style={{ fontSize: 24, marginBottom: 10 }}>⏳</div>
+            <div>Cargando pedidos disponibles...</div>
+          </div>
+        ) : pedidosDisponibles.length === 0 ? (
+          <div style={{
+            padding: 40,
+            textAlign: 'center',
+            color: '#666'
+          }}>
+            <div style={{ fontSize: 48, marginBottom: 10 }}>📋</div>
+            <div style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 5 }}>
+              No hay pedidos disponibles
+            </div>
+            <div style={{ fontSize: 14 }}>
+              Los pedidos aparecerán aquí cuando estén disponibles para asignar
+            </div>
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              fontSize: 14
+            }}>
+              <thead>
+                <tr style={{ background: '#f8fafc' }}>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    🕐 Fecha
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    🔑 Clave
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    👤 Cliente
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    📞 Teléfono
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    📍 Origen
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    🎯 Destino
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    🏢 Sector
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    🏷️ Estado
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    🚗 Conductor
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {pedidosDisponibles.map((pedido, index) => (
+                  <tr
+                    key={pedido.id}
+                    style={{
+                      borderBottom: '1px solid #f1f5f9',
+                      background: index % 2 === 0 ? '#fff' : '#fafbff',
+                      transition: 'background 0.2s ease'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.background = '#f0f9ff';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.background = index % 2 === 0 ? '#fff' : '#fafbff';
+                    }}
+                  >
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      color: '#6b7280',
+                      fontSize: 12,
+                      fontWeight: 'bold'
+                    }}>
+                      {pedido.fecha ? 
+                        new Date(pedido.fecha).toLocaleDateString('es-EC') + ' ' +
+                        new Date(pedido.fecha).toLocaleTimeString('es-EC', {
+                          hour: '2-digit',
+                          minute: '2-digit'
+                        })
+                        : '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      fontWeight: 'bold',
+                      color: '#1f2937'
+                    }}>
+                      {pedido.clave || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      color: '#374151'
+                    }}>
+                      {pedido.nombreCliente || pedido.codigo || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      color: '#374151'
+                    }}>
+                      {pedido.telefono || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      color: '#374151',
+                      maxWidth: 200,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {pedido.direccion || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      color: '#374151',
+                      maxWidth: 150,
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      {pedido.destino || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      color: '#374151',
+                      fontWeight: 'bold'
+                    }}>
+                      {pedido.sector || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center'
+                    }}>
+                      <button
+                        style={{
+                          padding: '4px 12px',
+                          borderRadius: 20,
+                          border: 'none',
+                          fontSize: 12,
+                          fontWeight: 'bold',
+                          cursor: 'default',
+                          background: pedido.estado === 'Disponible' ? '#10b981' : '#6b7280',
+                          color: 'white'
+                        }}
+                      >
+                        {pedido.estado || 'Disponible'}
+                      </button>
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      color: '#374151'
+                    }}>
+                      {pedido.idConductor && pedido.idConductor !== 'Sin asignar' ? (
+                        <div style={{ fontWeight: 'bold', fontSize: 12, color: '#059669' }}>
+                          Asignado
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 12, color: '#6b7280' }}>
+                          Sin asignar
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
 
     </div>
   );
