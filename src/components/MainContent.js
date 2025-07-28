@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Wrapper, Status } from "@googlemaps/react-wrapper";
-import { collection, query, where, getDocs, addDoc, updateDoc, doc } from "firebase/firestore";
+import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
 import axios from 'axios';
 
@@ -400,9 +400,9 @@ function MapaSelector({ onCoordinatesSelect, onAddressSelect, coordenadas, direc
               />
               <button
                 type="button"
-                onClick={() => {
-                  onCoordinatesSelect(coordenadasTemp);
-                  alert('Coordenadas actualizadas en el formulario');
+                onClick={async () => {
+                  await onCoordinatesSelect(coordenadasTemp);
+                  alert('Coordenadas aplicadas y mapa ocultado');
                 }}
                 style={{
                   padding: '8px 12px',
@@ -451,6 +451,8 @@ function TaxiForm() {
    const [unidadEdit, setUnidadEdit] = useState('');
    const [pedidosDisponibles, setPedidosDisponibles] = useState([]);
    const [cargandoPedidosDisp, setCargandoPedidosDisp] = useState(false);
+   const [pedidosEnCurso, setPedidosEnCurso] = useState([]);
+   const [cargandoPedidosCurso, setCargandoPedidosCurso] = useState(false);
 
 
   useEffect(() => {
@@ -471,10 +473,11 @@ function TaxiForm() {
     };
   }, []);
 
-  // Cargar viajes asignados y pedidos disponibles
+  // Cargar viajes asignados, pedidos disponibles y pedidos en curso
   useEffect(() => {
     cargarViajesAsignados();
     cargarPedidosDisponibles();
+    cargarPedidosEnCurso();
   }, []);
 
   const cargarViajesAsignados = async () => {
@@ -532,6 +535,35 @@ function TaxiForm() {
       console.error('Error al cargar pedidos disponibles:', error);
     } finally {
       setCargandoPedidosDisp(false);
+    }
+  };
+
+  // Cargar pedidos en curso
+  const cargarPedidosEnCurso = async () => {
+    setCargandoPedidosCurso(true);
+    try {
+      const q = query(collection(db, 'pedidoEnCurso'));
+      const querySnapshot = await getDocs(q);
+      const pedidos = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Ordenar por fecha de creación más reciente primero
+      pedidos.sort((a, b) => {
+        if (a.fecha && b.fecha) {
+          const fechaA = new Date(a.fecha);
+          const fechaB = new Date(b.fecha);
+          return fechaB - fechaA;
+        }
+        return 0;
+      });
+      
+      setPedidosEnCurso(pedidos);
+    } catch (error) {
+      console.error('Error al cargar pedidos en curso:', error);
+    } finally {
+      setCargandoPedidosCurso(false);
     }
   };
 
@@ -685,6 +717,14 @@ function TaxiForm() {
        cargarViajesAsignados();
        cargarPedidosDisponibles();
        
+              cargarPedidosEnCurso();
+       
+       // Ocultar el mapa después del registro exitoso
+       setMapaVisible(false);
+       
+       // Limpiar el formulario
+       limpiarFormulario();
+       
        setModal({ 
          open: true, 
          success: true, 
@@ -769,6 +809,14 @@ function TaxiForm() {
        cargarViajesAsignados();
        cargarPedidosDisponibles();
        
+              cargarPedidosEnCurso();
+       
+       // Ocultar el mapa después del registro exitoso
+       setMapaVisible(false);
+       
+       // Limpiar el formulario
+       limpiarFormulario();
+       
        setModal({ 
          open: true, 
          success: true, 
@@ -794,7 +842,7 @@ function TaxiForm() {
      setUnidadEdit('');
    };
 
-   // Función para guardar la edición del viaje
+   // Función para mover pedido de disponibles a en curso
    const guardarEdicionViaje = async (viajeId) => {
      if (!tiempoEdit.trim() || !unidadEdit.trim()) {
        setModal({ open: true, success: false, message: 'Por favor, ingrese tiempo y número de unidad.' });
@@ -818,30 +866,60 @@ function TaxiForm() {
        // Obtener datos del conductor
        const conductorData = conductoresSnapshot.docs[0].data();
 
-       // Actualizar el documento en Firestore
-       const pedidoRef = doc(db, 'pedidosDisponibles', viajeId);
-       await updateDoc(pedidoRef, {
+       // 1. Obtener el pedido actual de pedidosDisponibles
+       const pedidoOriginalRef = doc(db, 'pedidosDisponibles', viajeId);
+       const pedidoOriginalSnap = await getDoc(pedidoOriginalRef);
+       
+       if (!pedidoOriginalSnap.exists()) {
+         setModal({ open: true, success: false, message: 'Pedido no encontrado.' });
+         return;
+       }
+
+       const pedidoOriginal = pedidoOriginalSnap.data();
+
+       // 2. Crear el pedido en curso con todos los datos del conductor
+       const pedidoEnCursoData = {
+         ...pedidoOriginal,
+         // Datos de asignación
          tiempo: tiempoEdit,
          numeroUnidad: unidadEdit,
-         estado: 'Asignado',
-         idConductor: conductorData.id || '',
+         unidad: unidadEdit,
+         estado: 'Aceptado',
+         pedido: 'Aceptado',
+         // Datos del conductor
+         idConductor: conductorData.correo || conductorData.id || '',
+         nombre: conductorData.nombre || '',
          nombreConductor: conductorData.nombre || '',
-         placa: conductorData.placa || ''
-       });
+         placa: conductorData.placa || '',
+         color: conductorData.color || '',
+         telefonoConductor: conductorData.telefono || '',
+         foto: conductorData.foto || '',
+         minutos: parseInt(tiempoEdit) || 0,
+         distancia: '0.00 Mts', // Valor inicial
+         latitudConductor: '',
+         longitudConductor: ''
+       };
 
-       // Cancelar edición y recargar tablas
+       // 3. Agregar a pedidoEnCurso
+       await addDoc(collection(db, 'pedidoEnCurso'), pedidoEnCursoData);
+
+       // 4. Eliminar de pedidosDisponibles
+       await deleteDoc(pedidoOriginalRef);
+
+       // Cancelar edición y recargar todas las tablas
        cancelarEdicionViaje();
        cargarViajesAsignados();
        cargarPedidosDisponibles();
+       cargarPedidosEnCurso();
        
        setModal({ 
          open: true, 
          success: true, 
-         message: `¡Pedido asignado exitosamente!\nConductor: ${conductorData.nombre}\nUnidad: ${unidadEdit}\nPlaca: ${conductorData.placa}` 
+         message: `¡Pedido movido a "En Curso" exitosamente!\nConductor: ${conductorData.nombre}\nUnidad: ${unidadEdit}\nPlaca: ${conductorData.placa}` 
        });
      } catch (error) {
-       console.error('Error al actualizar el pedido:', error);
-       setModal({ open: true, success: false, message: 'Error al actualizar el pedido.' });
+       console.error('Error al mover el pedido:', error);
+       setModal({ open: true, success: false, message: 'Error al mover el pedido a "En Curso".' });
      }
    };
 
@@ -920,16 +998,60 @@ function TaxiForm() {
       cargarViajesAsignados();
       cargarPedidosDisponibles();
 
-      setModal({ open: true, success: true, message: '¡Viaje registrado exitosamente!' });
+       cargarPedidosEnCurso();
+       
+       // Ocultar el mapa después del registro exitoso
+       setMapaVisible(false);
+       
+       // Limpiar el formulario
+       limpiarFormulario();
+       
+       setModal({ open: true, success: true, message: '¡Viaje registrado exitosamente!' });
     } catch (error) {
       setModal({ open: true, success: false, message: 'Error al registrar el viaje.' });
     }
   };
 
   // Callbacks memoizados para evitar re-renders innecesarios
-  const handleCoordinatesSelect = useCallback((nuevasCoordenadas) => {
+  const handleCoordinatesSelect = useCallback(async (nuevasCoordenadas) => {
     setCoordenadas(nuevasCoordenadas);
-  }, []);
+    
+    // Ocultar el mapa automáticamente
+    setMapaVisible(false);
+    
+    // Guardar coordenadas y dirección en subcolección del usuario si existe
+    if (telefono && direccion && nuevasCoordenadas) {
+      try {
+        // Determinar la colección base según el tipo de teléfono
+        const coleccionBase = telefono.length === 7 ? 'usuarios' : 'usuariosfijos';
+        
+        // Buscar el usuario por teléfono
+        const qUsuario = query(
+          collection(db, coleccionBase),
+          where("telefono", "==", telefono)
+        );
+        
+        const snapshotUsuario = await getDocs(qUsuario);
+        
+        if (!snapshotUsuario.empty) {
+          const userDoc = snapshotUsuario.docs[0];
+          const direccionData = {
+            direccion: direccion,
+            coordenadas: nuevasCoordenadas,
+            fechaRegistro: new Date().toISOString(),
+            activa: true
+          };
+          
+          // Guardar en subcolección 'direcciones' del usuario
+          await addDoc(collection(db, coleccionBase, userDoc.id, 'direcciones'), direccionData);
+          
+          console.log('Dirección guardada en subcolección del usuario');
+        }
+      } catch (error) {
+        console.error('Error al guardar dirección en subcolección:', error);
+      }
+    }
+  }, [telefono, direccion, setMapaVisible]);
 
   const handleAddressSelect = useCallback((nuevaDireccion) => {
     setDireccion(nuevaDireccion);
@@ -1690,10 +1812,12 @@ function TaxiForm() {
         )}
       </div>
 
-      {/* Tabla de Pedidos Disponibles */}
+
+
+      {/* Tabla de Pedidos en Curso */}
       <div style={{
         marginTop: 40,
-        background: 'linear-gradient(135deg, #10b981 0%, #059669 100%)',
+        background: 'linear-gradient(135deg, #dc2626 0%, #b91c1c 100%)',
         borderRadius: 16,
         padding: 24,
         boxShadow: '0 8px 32px rgba(0,0,0,0.12)'
@@ -1713,7 +1837,7 @@ function TaxiForm() {
             alignItems: 'center',
             gap: 10
           }}>
-            📋 Pedidos Disponibles
+            🚗 Pedidos en Curso
             <span style={{
               background: 'rgba(255,255,255,0.2)',
               padding: '4px 12px',
@@ -1721,49 +1845,49 @@ function TaxiForm() {
               fontSize: 14,
               fontWeight: 'normal'
             }}>
-              {pedidosDisponibles.length} pedidos
+              {pedidosEnCurso.length} activos
             </span>
           </h3>
           <button
-            onClick={cargarPedidosDisponibles}
-            disabled={cargandoPedidosDisp}
+            onClick={cargarPedidosEnCurso}
+            disabled={cargandoPedidosCurso}
             style={{
               background: 'rgba(255,255,255,0.2)',
               border: 'none',
               color: 'white',
               padding: '8px 16px',
               borderRadius: 8,
-              cursor: cargandoPedidosDisp ? 'not-allowed' : 'pointer',
+              cursor: cargandoPedidosCurso ? 'not-allowed' : 'pointer',
               fontSize: 14,
               fontWeight: 'bold',
-              opacity: cargandoPedidosDisp ? 0.7 : 1
+              opacity: cargandoPedidosCurso ? 0.7 : 1
             }}
           >
-            {cargandoPedidosDisp ? '🔄 Cargando...' : '🔄 Actualizar'}
+            {cargandoPedidosCurso ? '🔄 Cargando...' : '🔄 Actualizar'}
           </button>
         </div>
 
-        {cargandoPedidosDisp ? (
+        {cargandoPedidosCurso ? (
           <div style={{
             padding: 40,
             textAlign: 'center',
             color: '#666'
           }}>
             <div style={{ fontSize: 24, marginBottom: 10 }}>⏳</div>
-            <div>Cargando pedidos disponibles...</div>
+            <div>Cargando pedidos en curso...</div>
           </div>
-        ) : pedidosDisponibles.length === 0 ? (
+        ) : pedidosEnCurso.length === 0 ? (
           <div style={{
             padding: 40,
             textAlign: 'center',
             color: '#666'
           }}>
-            <div style={{ fontSize: 48, marginBottom: 10 }}>📋</div>
+            <div style={{ fontSize: 48, marginBottom: 10 }}>🚗</div>
             <div style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 5 }}>
-              No hay pedidos disponibles
+              No hay pedidos en curso
             </div>
             <div style={{ fontSize: 14 }}>
-              Los pedidos aparecerán aquí cuando estén disponibles para asignar
+              Los pedidos aparecerán aquí cuando sean asignados a conductores
             </div>
           </div>
         ) : (
@@ -1843,7 +1967,27 @@ function TaxiForm() {
                     borderBottom: '2px solid #e5e7eb',
                     whiteSpace: 'nowrap'
                   }}>
-                    🏢 Sector
+                    🚗 Conductor
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    🚕 Unidad
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
+                    ⏱️ Tiempo
                   </th>
                   <th style={{
                     padding: '12px 16px',
@@ -1855,20 +1999,10 @@ function TaxiForm() {
                   }}>
                     🏷️ Estado
                   </th>
-                  <th style={{
-                    padding: '12px 16px',
-                    textAlign: 'center',
-                    fontWeight: 'bold',
-                    color: '#374151',
-                    borderBottom: '2px solid #e5e7eb',
-                    whiteSpace: 'nowrap'
-                  }}>
-                    🚗 Conductor
-                  </th>
                 </tr>
               </thead>
               <tbody>
-                {pedidosDisponibles.map((pedido, index) => (
+                {pedidosEnCurso.map((pedido, index) => (
                   <tr
                     key={pedido.id}
                     style={{
@@ -1877,7 +2011,7 @@ function TaxiForm() {
                       transition: 'background 0.2s ease'
                     }}
                     onMouseEnter={(e) => {
-                      e.currentTarget.style.background = '#f0f9ff';
+                      e.currentTarget.style.background = '#fef2f2';
                     }}
                     onMouseLeave={(e) => {
                       e.currentTarget.style.background = index % 2 === 0 ? '#fff' : '#fafbff';
@@ -1940,10 +2074,37 @@ function TaxiForm() {
                     <td style={{
                       padding: '12px 16px',
                       textAlign: 'center',
-                      color: '#374151',
-                      fontWeight: 'bold'
+                      color: '#374151'
                     }}>
-                      {pedido.sector || '-'}
+                      <div>
+                        <div style={{ fontWeight: 'bold', fontSize: 12, color: '#dc2626' }}>
+                          {pedido.nombre || pedido.nombreConductor || '-'}
+                        </div>
+                        <div style={{ fontSize: 10, color: '#6b7280' }}>
+                          {pedido.placa || '-'}
+                        </div>
+                        {pedido.telefonoConductor && (
+                          <div style={{ fontSize: 10, color: '#6b7280' }}>
+                            📞 {pedido.telefonoConductor}
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      fontWeight: 'bold',
+                      color: '#dc2626'
+                    }}>
+                      {pedido.unidad || pedido.numeroUnidad || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      fontWeight: 'bold',
+                      color: '#059669'
+                    }}>
+                      {pedido.tiempo || pedido.minutos ? `${pedido.tiempo || pedido.minutos} min` : '-'}
                     </td>
                     <td style={{
                       padding: '12px 16px',
@@ -1957,27 +2118,12 @@ function TaxiForm() {
                           fontSize: 12,
                           fontWeight: 'bold',
                           cursor: 'default',
-                          background: pedido.estado === 'Disponible' ? '#10b981' : '#6b7280',
+                          background: pedido.estado === 'Aceptado' ? '#dc2626' : '#6b7280',
                           color: 'white'
                         }}
                       >
-                        {pedido.estado || 'Disponible'}
+                        {pedido.estado || 'En Curso'}
                       </button>
-                    </td>
-                    <td style={{
-                      padding: '12px 16px',
-                      textAlign: 'center',
-                      color: '#374151'
-                    }}>
-                      {pedido.idConductor && pedido.idConductor !== 'Sin asignar' ? (
-                        <div style={{ fontWeight: 'bold', fontSize: 12, color: '#059669' }}>
-                          Asignado
-                        </div>
-                      ) : (
-                        <div style={{ fontSize: 12, color: '#6b7280' }}>
-                          Sin asignar
-                        </div>
-                      )}
                     </td>
                   </tr>
                 ))}
