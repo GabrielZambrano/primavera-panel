@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Wrapper, Status } from "@googlemaps/react-wrapper";
-import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot } from "firebase/firestore";
+import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot, setDoc } from "firebase/firestore";
 import { db } from "../firebaseConfig";
-import axios from 'axios';
+// import axios from 'axios'; // Comentado porque no se usa
 
 // Configuración de Google Maps
 const GOOGLE_MAPS_API_KEY = "AIzaSyBWqJ5_eaGfM6epbuChtkq0W5eqv2Ew37c";
@@ -443,17 +443,27 @@ function TaxiForm() {
     email: ''
   });
   const [modal, setModal] = useState({ open: false, success: true, message: '' });
-  const [mapaVisible, setMapaVisible] = useState(false); // Para controlar el mapa desde el formulario
-     const [viajesAsignados, setViajesAsignados] = useState([]);
+    const [mapaVisible, setMapaVisible] = useState(false); // Para controlar el mapa desde el formulario
+  const [modalRegistroCliente, setModalRegistroCliente] = useState({ 
+    open: false, 
+    tipoCliente: '', 
+    coleccion: '', 
+    modoAplicacion: false,
+    datosCliente: { nombre: '', direccion: '', coordenadas: '', sector: '', prefijo: 'Ecuador' }
+  });
+       const [viajesAsignados, setViajesAsignados] = useState([]);
    const [cargandoViajes, setCargandoViajes] = useState(false);
    const [editandoViaje, setEditandoViaje] = useState(null);
    const [tiempoEdit, setTiempoEdit] = useState('');
    const [unidadEdit, setUnidadEdit] = useState('');
-   const [pedidosDisponibles, setPedidosDisponibles] = useState([]);
-   const [cargandoPedidosDisp, setCargandoPedidosDisp] = useState(false);
    const [pedidosEnCurso, setPedidosEnCurso] = useState([]);
    const [cargandoPedidosCurso, setCargandoPedidosCurso] = useState(false);
-
+  // Nuevo estado para direcciones guardadas
+  const [direccionesGuardadas, setDireccionesGuardadas] = useState([]);
+  const [direccionSeleccionada, setDireccionSeleccionada] = useState(null);
+  // Estados para edición de direcciones
+  const [editandoDireccion, setEditandoDireccion] = useState(null);
+  const [textoEditado, setTextoEditado] = useState('');
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -494,13 +504,10 @@ function TaxiForm() {
       });
       
       setViajesAsignados(pedidos);
-      setPedidosDisponibles(pedidos);
       setCargandoViajes(false);
-      setCargandoPedidosDisp(false);
     }, (error) => {
       console.error('Error en listener de pedidosDisponibles:', error);
       setCargandoViajes(false);
-      setCargandoPedidosDisp(false);
     });
 
     // Listener para pedidoEnCurso
@@ -565,33 +572,7 @@ function TaxiForm() {
   };
 
       // Cargar pedidos disponibles
-  const cargarPedidosDisponibles = async () => {
-    setCargandoPedidosDisp(true);
-    try {
-      const q = query(collection(db, 'pedidosDisponibles'));
-      const querySnapshot = await getDocs(q);
-      const pedidos = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
-      
-      // Ordenar por fecha de creación más reciente primero
-      pedidos.sort((a, b) => {
-        if (a.fecha && b.fecha) {
-          const fechaA = new Date(a.fecha);
-          const fechaB = new Date(b.fecha);
-          return fechaB - fechaA;
-        }
-        return 0;
-      });
-      
-      setPedidosDisponibles(pedidos);
-    } catch (error) {
-      console.error('Error al cargar pedidos disponibles:', error);
-    } finally {
-      setCargandoPedidosDisp(false);
-    }
-  };
+
 
       // Cargar pedidos en curso
   const cargarPedidosEnCurso = async () => {
@@ -622,52 +603,210 @@ function TaxiForm() {
     }
   };
 
-  const buscarUsuario = async (numeroTelefono) => {
-    if (numeroTelefono.length < 7) {
-      setUsuarioEncontrado(null);
-      setNombre('');
-      setDireccion('');
-      setCoordenadas('');
-      setMostrarModal(false);
-      return;
+
+
+  // Nueva función para buscar en clientes fijos cuando se presione Insertar
+  const buscarClienteFijo = async (numeroTelefono) => {
+    if (numeroTelefono.length !== 7) {
+      return null; // Solo buscar si tiene exactamente 7 dígitos
     }
 
-    setBuscandoUsuario(true);
     try {
-      let coleccionNombre = '';
-      if (numeroTelefono.length === 7) {
-        coleccionNombre = 'usuarios';
-      } else if (numeroTelefono.length > 7) {
-        coleccionNombre = 'usuariosfijos';
-      }
-
-      const q = query(
-        collection(db, coleccionNombre),
+      // Buscar en la colección "clientes fijos"
+      const qClientesFijos = query(
+        collection(db, 'clientes fijos'),
         where("telefono", "==", numeroTelefono)
       );
+      const clientesSnapshot = await getDocs(qClientesFijos);
 
-      const querySnapshot = await getDocs(q);
+      if (!clientesSnapshot.empty) {
+        const clienteData = clientesSnapshot.docs[0].data();
+        console.log('Cliente fijo encontrado:', clienteData);
+        return clienteData;
+      }
 
-      if (!querySnapshot.empty) {
-        const userData = querySnapshot.docs[0].data();
-        setUsuarioEncontrado(userData);
-        if (userData.nombre) setNombre(userData.nombre);
-        if (userData.direccion) setDireccion(userData.direccion);
-        if (userData.coordenadas) setCoordenadas(userData.coordenadas);
-        setMostrarModal(false);
+      // Si no se encuentra en "clientes fijos", buscar en "teléfonos fijos"
+      const qTelefonosFijos = query(
+        collection(db, 'teléfonos fijos'),
+        where("telefono", "==", numeroTelefono)
+      );
+      const telefonosSnapshot = await getDocs(qTelefonosFijos);
+
+      if (!telefonosSnapshot.empty) {
+        const telefonoData = telefonosSnapshot.docs[0].data();
+        console.log('Teléfono fijo encontrado:', telefonoData);
+        return telefonoData;
+      }
+
+      return null; // No se encontró en ninguna colección
+    } catch (error) {
+      console.error('Error al buscar cliente fijo:', error);
+      return null;
+    }
+  };
+
+  // Nueva función para buscar en ambas colecciones de clientes
+  const buscarCliente = async (numeroTelefono) => {
+    try {
+      let coleccionNombre = '';
+      let tipoCliente = '';
+      
+      console.log('🔍 Iniciando búsqueda de cliente con teléfono:', numeroTelefono);
+      
+      // Determinar el tipo de cliente según la longitud del teléfono
+      let telefonoBusqueda = numeroTelefono;
+      
+      if (numeroTelefono.length === 7) {
+        coleccionNombre = 'clientes';
+        tipoCliente = 'cliente';
+        telefonoBusqueda = numeroTelefono;
+        console.log('📱 Buscando en colección "clientes" (7 dígitos)');
+        
+        // Buscar directamente por ID (teléfono)
+        console.log('🔎 Buscando cliente por ID (teléfono):', telefonoBusqueda);
+        const clienteDoc = doc(db, coleccionNombre, telefonoBusqueda);
+        const clienteSnapshot = await getDoc(clienteDoc);
+        
+        if (clienteSnapshot.exists()) {
+          const clienteData = clienteSnapshot.data();
+          console.log('📄 Documento del cliente encontrado:', clienteData);
+          
+          // Cargar la primera dirección del array (si existe)
+          if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+            // Buscar la dirección activa más reciente
+            const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+            clienteData.direccion = direccionActiva.direccion;
+            clienteData.coordenadas = direccionActiva.coordenadas;
+            console.log('📍 Dirección encontrada en array:', direccionActiva);
+            console.log('📍 Total de direcciones del cliente:', clienteData.direcciones.length);
+          } else {
+            console.log('⚠️ No se encontraron direcciones para el cliente');
+            clienteData.direccion = '';
+            clienteData.coordenadas = '';
+          }
+          
+          console.log(`✅ ${tipoCliente} encontrado con datos completos:`, clienteData);
+          return { 
+            encontrado: true, 
+            datos: clienteData, 
+            tipoCliente: tipoCliente,
+            coleccion: coleccionNombre
+          };
+        } else {
+          console.log(`❌ No se encontró ${tipoCliente} con teléfono ${numeroTelefono} en ${coleccionNombre}`);
+          return { 
+            encontrado: false, 
+            tipoCliente: tipoCliente,
+            coleccion: coleccionNombre
+          };
+        }
+      } else if (numeroTelefono.length >= 9 && numeroTelefono.length <= 10) {
+        coleccionNombre = 'clientestelefonos';
+        tipoCliente = 'cliente telefono';
+        
+        // Para celulares, intentar primero con telefonoCompleto (Ecuador por defecto)
+        const telefonoCompleto = concatenarTelefonoWhatsApp(numeroTelefono, 'Ecuador');
+        console.log('📱 Intentando buscar con telefonoCompleto:', telefonoCompleto);
+        
+        // Intentar primero con telefonoCompleto
+        let clienteDoc = doc(db, coleccionNombre, telefonoCompleto);
+        let clienteSnapshot = await getDoc(clienteDoc);
+        
+        if (clienteSnapshot.exists()) {
+          telefonoBusqueda = telefonoCompleto;
+          console.log('✅ Cliente encontrado con telefonoCompleto como ID');
+        } else {
+          // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
+        telefonoBusqueda = numeroTelefono.slice(-9);
+          console.log('📱 Intentando con últimos 9 dígitos como fallback:', telefonoBusqueda);
+          clienteDoc = doc(db, coleccionNombre, telefonoBusqueda);
+          clienteSnapshot = await getDoc(clienteDoc);
+        }
+        
+        if (clienteSnapshot.exists()) {
+          const clienteData = clienteSnapshot.data();
+          console.log('📄 Documento del cliente encontrado:', clienteData);
+          
+          // Cargar la primera dirección del array (si existe)
+          if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+            // Buscar la dirección activa más reciente
+            const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+            clienteData.direccion = direccionActiva.direccion;
+            clienteData.coordenadas = direccionActiva.coordenadas;
+            console.log('📍 Dirección encontrada en array:', direccionActiva);
+            console.log('📍 Total de direcciones del cliente:', clienteData.direcciones.length);
+          } else {
+            console.log('⚠️ No se encontraron direcciones para el cliente');
+            clienteData.direccion = '';
+            clienteData.coordenadas = '';
+          }
+          
+          console.log(`✅ ${tipoCliente} encontrado con datos completos:`, clienteData);
+          return { 
+            encontrado: true, 
+            datos: clienteData, 
+            tipoCliente: tipoCliente,
+            coleccion: coleccionNombre
+          };
+        } else {
+          console.log(`❌ No se encontró ${tipoCliente} con teléfono ${numeroTelefono} en ${coleccionNombre}`);
+          return { 
+            encontrado: false, 
+            tipoCliente: tipoCliente,
+            coleccion: coleccionNombre
+          };
+        }
+      } else if (numeroTelefono.length > 10) {
+        coleccionNombre = 'clientes fijos';
+        tipoCliente = 'cliente fijo';
+        telefonoBusqueda = numeroTelefono;
+        console.log('📱 Buscando en colección "clientes fijos" (>10 dígitos)');
+
+      // Buscar directamente por ID (teléfono)
+      console.log('🔎 Buscando cliente por ID (teléfono):', telefonoBusqueda);
+      const clienteDoc = doc(db, coleccionNombre, telefonoBusqueda);
+      const clienteSnapshot = await getDoc(clienteDoc);
+      
+      if (clienteSnapshot.exists()) {
+        const clienteData = clienteSnapshot.data();
+        console.log('📄 Documento del cliente encontrado:', clienteData);
+        
+        // Cargar la primera dirección del array (si existe)
+        if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+          // Buscar la dirección activa más reciente
+          const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+          clienteData.direccion = direccionActiva.direccion;
+          clienteData.coordenadas = direccionActiva.coordenadas;
+          console.log('📍 Dirección encontrada en array:', direccionActiva);
+          console.log('📍 Total de direcciones del cliente:', clienteData.direcciones.length);
+        } else {
+          console.log('⚠️ No se encontraron direcciones para el cliente');
+          clienteData.direccion = '';
+          clienteData.coordenadas = '';
+        }
+        
+        console.log(`✅ ${tipoCliente} encontrado con datos completos:`, clienteData);
+        return { 
+          encontrado: true, 
+          datos: clienteData, 
+          tipoCliente: tipoCliente,
+          coleccion: coleccionNombre
+        };
       } else {
-        setUsuarioEncontrado(null);
-        setNombre('');
-        setDireccion('');
-        setCoordenadas('');
-        setMostrarModal(true);
-        setNuevoCliente({ nombre: '', direccion: '', coordenadas: '', email: '' });
+        console.log(`❌ No se encontró ${tipoCliente} con teléfono ${numeroTelefono} en ${coleccionNombre}`);
+        return { 
+          encontrado: false, 
+          tipoCliente: tipoCliente,
+          coleccion: coleccionNombre
+        };
+        }
+      } else {
+        console.log('❌ Teléfono no cumple criterios:', numeroTelefono.length, 'dígitos');
+        return { encontrado: false, tipoCliente: null };
       }
     } catch (error) {
-      console.error('Error al buscar usuario:', error);
-      setUsuarioEncontrado(null);
-    } finally {
-      setBuscandoUsuario(false);
+      console.error('💥 Error al buscar cliente:', error);
+      return { encontrado: false, tipoCliente: null };
     }
   };
 
@@ -680,15 +819,293 @@ function TaxiForm() {
     const value = e.target.value;
     if (/^\d*$/.test(value)) {
       setTelefono(value);
-      if (value.length >= 7) {
-        buscarUsuario(value);
-      } else {
+      // Limpiar datos cuando el teléfono cambie
+      if (value.length < 7) {
         setUsuarioEncontrado(null);
         setNombre('');
         setDireccion('');
         setCoordenadas('');
         setMostrarModal(false);
       }
+    }
+  };
+
+  // Nueva función para manejar Enter en el campo teléfono
+  const handleTelefonoKeyDown = async (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      
+      // Solo buscar si el teléfono tiene 7 dígitos, 9-10 dígitos, o más de 10
+      if (telefono && (telefono.length === 7 || (telefono.length >= 9 && telefono.length <= 10) || telefono.length > 10)) {
+        console.log('🔍 Buscando cliente con teléfono:', telefono);
+        
+        // Debug: Verificar estructura de datos directamente
+        if (telefono === '2511511') {
+          console.log('🔍 DEBUG: Verificando estructura para HOTEL VIENA...');
+          try {
+            const q = query(collection(db, 'clientes'), where("telefono", "==", "2511511"));
+            const snapshot = await getDocs(q);
+            console.log('📊 Documentos encontrados:', snapshot.size);
+            
+            if (!snapshot.empty) {
+              const doc = snapshot.docs[0];
+              console.log('📄 Documento principal:', doc.data());
+              console.log('🆔 ID del documento:', doc.id);
+              
+              // Verificar subcolección direcciones
+              const direccionesRef = collection(db, 'clientes', doc.id, 'direcciones');
+              const direccionesSnapshot = await getDocs(direccionesRef);
+              console.log('📍 Direcciones en subcolección:', direccionesSnapshot.size);
+              
+              direccionesSnapshot.forEach((doc, index) => {
+                console.log(`📍 Dirección ${index + 1}:`, doc.data());
+              });
+            }
+          } catch (error) {
+            console.error('💥 Error en debug:', error);
+          }
+        }
+        
+        const resultadoBusqueda = await buscarCliente(telefono);
+        console.log('📋 Resultado de búsqueda:', resultadoBusqueda);
+        
+        if (resultadoBusqueda && resultadoBusqueda.encontrado) {
+          // Cliente encontrado, cargar datos automáticamente
+          const clienteData = resultadoBusqueda.datos;
+          console.log('📋 Datos completos del cliente encontrado:', clienteData);
+          
+          if (clienteData.nombre) {
+            setNombre(clienteData.nombre);
+            console.log('✅ Nombre cargado:', clienteData.nombre);
+          }
+          
+          if (clienteData.direccion) {
+            setDireccion(clienteData.direccion);
+            console.log('✅ Dirección cargada:', clienteData.direccion);
+          } else {
+            console.log('⚠️ No se encontró dirección para el cliente');
+          }
+          
+          if (clienteData.coordenadas) {
+            setCoordenadas(clienteData.coordenadas);
+            console.log('✅ Coordenadas cargadas:', clienteData.coordenadas);
+          } else {
+            console.log('⚠️ No se encontraron coordenadas para el cliente');
+          }
+          
+          console.log(`✅ Datos del ${resultadoBusqueda.tipoCliente} cargados automáticamente:`, clienteData);
+          
+          // Cargar direcciones guardadas directamente
+          if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+            setDireccionesGuardadas(clienteData.direcciones);
+            // Seleccionar la primera dirección por defecto
+            if (clienteData.direcciones.length > 0) {
+              const primeraDireccion = clienteData.direcciones[0];
+              setDireccionSeleccionada(primeraDireccion);
+              setDireccion(primeraDireccion.direccion);
+              setCoordenadas(primeraDireccion.coordenadas || '');
+              console.log('📍 Primera dirección seleccionada automáticamente:', primeraDireccion);
+            }
+            console.log('📍 Direcciones guardadas cargadas:', clienteData.direcciones.length);
+          } else {
+            setDireccionesGuardadas([]);
+            setDireccionSeleccionada(null);
+            console.log('⚠️ No hay direcciones guardadas para este cliente');
+          }
+        } else {
+          // Cliente no encontrado, mostrar modal de registro
+          console.log('❌ Cliente no encontrado, mostrando modal de registro');
+          setDireccionesGuardadas([]);
+          setDireccionSeleccionada(null);
+          setModalRegistroCliente({
+            open: true,
+            tipoCliente: resultadoBusqueda ? resultadoBusqueda.tipoCliente : 'cliente',
+            coleccion: resultadoBusqueda ? resultadoBusqueda.coleccion : 'clientes',
+            modoAplicacion: modoSeleccion === 'aplicacion',
+            datosCliente: { 
+              nombre: '', 
+              direccion: '', 
+              coordenadas: '', 
+              sector: ''
+            }
+          });
+          console.log('📝 Modal de registro configurado:', {
+            open: true,
+            tipoCliente: resultadoBusqueda ? resultadoBusqueda.tipoCliente : 'cliente',
+            coleccion: resultadoBusqueda ? resultadoBusqueda.coleccion : 'clientes',
+            modoAplicacion: modoSeleccion === 'aplicacion'
+          });
+        }
+      } else {
+        console.log('📱 Teléfono no cumple criterios para búsqueda:', telefono);
+      }
+    }
+  };
+
+  // Función para seleccionar una dirección del listado
+  const seleccionarDireccion = (direccion) => {
+    setDireccionSeleccionada(direccion);
+    setDireccion(direccion.direccion);
+    setCoordenadas(direccion.coordenadas || '');
+    console.log('📍 Dirección seleccionada:', direccion);
+  };
+
+  // Función para iniciar edición de dirección
+  const iniciarEdicionDireccion = (direccion) => {
+    setEditandoDireccion(direccion);
+    setTextoEditado(direccion.direccion);
+  };
+
+  // Función para guardar edición de dirección
+  const guardarEdicionDireccion = async () => {
+    if (!editandoDireccion || !textoEditado.trim()) return;
+
+    try {
+      // Determinar la colección según la longitud del teléfono
+      let coleccionNombre = '';
+      if (telefono.length === 7) {
+        coleccionNombre = 'clientes';
+      } else if (telefono.length >= 9 && telefono.length <= 10) {
+        coleccionNombre = 'clientestelefonos';
+      } else {
+        console.log('❌ Tipo de teléfono no válido para editar historial');
+        return;
+      }
+
+      // Buscar el cliente
+      let telefonoId = telefono;
+      let clienteRef;
+
+      if (telefono.length >= 9 && telefono.length <= 10) {
+        const telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+        clienteRef = doc(db, coleccionNombre, telefonoCompleto);
+        let clienteSnapshot = await getDoc(clienteRef);
+
+        if (!clienteSnapshot.exists()) {
+          telefonoId = telefono.slice(-9);
+          clienteRef = doc(db, coleccionNombre, telefonoId);
+          clienteSnapshot = await getDoc(clienteRef);
+        }
+      } else {
+        clienteRef = doc(db, coleccionNombre, telefonoId);
+      }
+
+      const clienteSnapshot = await getDoc(clienteRef);
+      if (!clienteSnapshot.exists()) {
+        console.log('❌ Cliente no encontrado para editar historial');
+        return;
+      }
+
+      const clienteData = clienteSnapshot.data();
+      const direccionesActuales = clienteData.direcciones || [];
+
+      // Encontrar y actualizar la dirección específica
+      const direccionIndex = direccionesActuales.findIndex(dir => 
+        dir.direccion === editandoDireccion.direccion && 
+        dir.coordenadas === editandoDireccion.coordenadas
+      );
+
+      if (direccionIndex !== -1) {
+        direccionesActuales[direccionIndex].direccion = textoEditado.trim();
+        direccionesActuales[direccionIndex].fechaActualizacion = new Date();
+
+        // Actualizar en Firestore
+        await updateDoc(clienteRef, {
+          direcciones: direccionesActuales
+        });
+
+        // Actualizar el estado local
+        setDireccionesGuardadas(direccionesActuales);
+        
+        // Si la dirección editada es la seleccionada, actualizar también
+        if (direccionSeleccionada === editandoDireccion) {
+          const direccionActualizada = direccionesActuales[direccionIndex];
+          setDireccionSeleccionada(direccionActualizada);
+          setDireccion(direccionActualizada.direccion);
+        }
+
+        console.log('✅ Dirección editada exitosamente');
+      }
+
+      // Limpiar estado de edición
+      setEditandoDireccion(null);
+      setTextoEditado('');
+    } catch (error) {
+      console.error('💥 Error al editar dirección:', error);
+    }
+  };
+
+  // Función para cancelar edición
+  const cancelarEdicionDireccion = () => {
+    setEditandoDireccion(null);
+    setTextoEditado('');
+  };
+
+  // Función para eliminar dirección del historial
+  const eliminarDireccion = async (direccionAEliminar) => {
+    try {
+      // Determinar la colección según la longitud del teléfono
+      let coleccionNombre = '';
+      if (telefono.length === 7) {
+        coleccionNombre = 'clientes';
+      } else if (telefono.length >= 9 && telefono.length <= 10) {
+        coleccionNombre = 'clientestelefonos';
+      } else {
+        console.log('❌ Tipo de teléfono no válido para eliminar del historial');
+        return;
+      }
+
+      // Buscar el cliente
+      let telefonoId = telefono;
+      let clienteRef;
+
+      if (telefono.length >= 9 && telefono.length <= 10) {
+        const telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+        clienteRef = doc(db, coleccionNombre, telefonoCompleto);
+        let clienteSnapshot = await getDoc(clienteRef);
+
+        if (!clienteSnapshot.exists()) {
+          telefonoId = telefono.slice(-9);
+          clienteRef = doc(db, coleccionNombre, telefonoId);
+          clienteSnapshot = await getDoc(clienteRef);
+        }
+      } else {
+        clienteRef = doc(db, coleccionNombre, telefonoId);
+      }
+
+      const clienteSnapshot = await getDoc(clienteRef);
+      if (!clienteSnapshot.exists()) {
+        console.log('❌ Cliente no encontrado para eliminar del historial');
+        return;
+      }
+
+      const clienteData = clienteSnapshot.data();
+      const direccionesActuales = clienteData.direcciones || [];
+
+      // Filtrar la dirección a eliminar
+      const direccionesFiltradas = direccionesActuales.filter(dir => 
+        !(dir.direccion === direccionAEliminar.direccion && 
+          dir.coordenadas === direccionAEliminar.coordenadas)
+      );
+
+      // Actualizar en Firestore
+      await updateDoc(clienteRef, {
+        direcciones: direccionesFiltradas
+      });
+
+      // Actualizar el estado local
+      setDireccionesGuardadas(direccionesFiltradas);
+      
+      // Si la dirección eliminada era la seleccionada, limpiar selección
+      if (direccionSeleccionada === direccionAEliminar) {
+        setDireccionSeleccionada(null);
+        setDireccion('');
+        setCoordenadas('');
+      }
+
+      console.log('✅ Dirección eliminada del historial');
+    } catch (error) {
+      console.error('💥 Error al eliminar dirección:', error);
     }
   };
 
@@ -716,6 +1133,293 @@ function TaxiForm() {
     }
   };
 
+  // Nueva función para registrar clientes con direcciones mapeadas
+  const registrarNuevoCliente = async (datosCliente, tipoCliente, modoAplicacion) => {
+    try {
+      let coleccionNombre = '';
+      
+      // Determinar la colección según el tipo de cliente
+      if (tipoCliente === 'cliente') {
+        coleccionNombre = 'clientes';
+      } else if (tipoCliente === 'cliente telefono') {
+        coleccionNombre = 'clientestelefonos';
+      } else if (tipoCliente === 'cliente fijo') {
+        coleccionNombre = 'clientes fijos';
+      } else {
+        throw new Error('Tipo de cliente no válido');
+      }
+
+      // Crear array de direcciones
+      const direcciones = [];
+      
+      // Si hay dirección, agregarla al array
+      if (datosCliente.direccion) {
+        const nuevaDireccion = {
+          direccion: datosCliente.direccion,
+          coordenadas: datosCliente.coordenadas || '',
+          fechaRegistro: new Date(),
+          activa: true,
+          modoRegistro: modoAplicacion ? 'aplicacion' : 'manual'
+        };
+        
+        direcciones.push(nuevaDireccion);
+        console.log('📍 Dirección agregada al array:', nuevaDireccion);
+      }
+
+      // Crear el documento principal del cliente con direcciones mapeadas
+      const nuevoCliente = {
+        telefono: telefono,
+        telefonoCompleto: concatenarTelefonoWhatsApp(telefono, datosCliente.prefijo || 'Ecuador'),
+        nombre: datosCliente.nombre,
+        fechaRegistro: new Date(),
+        activo: true,
+        sector: datosCliente.sector || '',
+        prefijo: datosCliente.prefijo || 'Ecuador', // Prefijo por defecto
+        direcciones: direcciones // Array mapeado de direcciones
+      };
+
+      // Crear el documento del cliente usando el teléfono como ID
+      let telefonoId = telefono;
+      if (tipoCliente === 'cliente telefono') {
+        // Para celulares, usar el telefonoCompleto como ID (sin el cero inicial)
+        telefonoId = concatenarTelefonoWhatsApp(telefono, datosCliente.prefijo || 'Ecuador');
+        console.log('📱 Usando telefonoCompleto como ID:', telefonoId);
+      }
+      
+      const clienteRef = doc(db, coleccionNombre, telefonoId);
+      await setDoc(clienteRef, nuevoCliente);
+      
+      console.log('📍 Cliente registrado con direcciones mapeadas:', nuevoCliente);
+      
+      // Actualizar los campos del formulario
+      setNombre(datosCliente.nombre);
+      setDireccion(datosCliente.direccion);
+      if (datosCliente.coordenadas) {
+        setCoordenadas(datosCliente.coordenadas);
+      }
+      
+      // Cerrar el modal de registro
+      setModalRegistroCliente({ 
+        open: false, 
+        tipoCliente: '', 
+        coleccion: '', 
+        modoAplicacion: false,
+        datosCliente: { nombre: '', direccion: '', coordenadas: '', sector: '', prefijo: 'Ecuador' } 
+      });
+      
+      setModal({ 
+        open: true, 
+        success: true, 
+        message: `${tipoCliente} registrado exitosamente en la colección ${coleccionNombre}` 
+      });
+      
+    } catch (error) {
+      console.error('Error al registrar cliente:', error);
+      setModal({ 
+        open: true, 
+        success: false, 
+        message: `Error al registrar ${tipoCliente}. Intente nuevamente.` 
+      });
+    }
+  };
+
+  // Función para agregar nueva dirección a cliente existente
+  const agregarNuevaDireccion = async (telefono, nuevaDireccion, tipoCliente) => {
+    try {
+      let coleccionNombre = '';
+      
+      if (tipoCliente === 'cliente') {
+        coleccionNombre = 'clientes';
+      } else if (tipoCliente === 'cliente telefono') {
+        coleccionNombre = 'clientestelefonos';
+      } else if (tipoCliente === 'cliente fijo') {
+        coleccionNombre = 'clientes fijos';
+      } else {
+        throw new Error('Tipo de cliente no válido');
+      }
+
+      // Obtener el documento del cliente
+      let telefonoId = telefono;
+      let clienteRef;
+      let clienteSnapshot;
+      
+      if (tipoCliente === 'cliente telefono') {
+        // Para celulares, intentar primero con telefonoCompleto (Ecuador por defecto)
+        const telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+        console.log('📱 Intentando buscar cliente con telefonoCompleto:', telefonoCompleto);
+        
+        clienteRef = doc(db, coleccionNombre, telefonoCompleto);
+        clienteSnapshot = await getDoc(clienteRef);
+        
+        if (clienteSnapshot.exists()) {
+          telefonoId = telefonoCompleto;
+          console.log('✅ Cliente encontrado con telefonoCompleto como ID');
+        } else {
+          // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
+        telefonoId = telefono.slice(-9);
+          console.log('📱 Intentando con últimos 9 dígitos como fallback:', telefonoId);
+          clienteRef = doc(db, coleccionNombre, telefonoId);
+          clienteSnapshot = await getDoc(clienteRef);
+        }
+      } else {
+        // Para otros tipos de cliente, usar el teléfono original
+        clienteRef = doc(db, coleccionNombre, telefonoId);
+        clienteSnapshot = await getDoc(clienteRef);
+      }
+      
+      if (!clienteSnapshot.exists()) {
+        throw new Error('Cliente no encontrado');
+      }
+
+      const clienteData = clienteSnapshot.data();
+      const direccionesActuales = clienteData.direcciones || [];
+      
+      // Agregar nueva dirección al array
+      const nuevaDireccionData = {
+        direccion: nuevaDireccion.direccion,
+        coordenadas: nuevaDireccion.coordenadas || '',
+        fechaRegistro: new Date(),
+        activa: true,
+        modoRegistro: nuevaDireccion.modoRegistro || 'manual'
+      };
+      
+      direccionesActuales.push(nuevaDireccionData);
+      
+      // Actualizar el documento con el nuevo array de direcciones
+      await updateDoc(clienteRef, {
+        direcciones: direccionesActuales
+      });
+      
+      console.log('📍 Nueva dirección agregada al cliente:', nuevaDireccionData);
+      console.log('📍 Total de direcciones del cliente:', direccionesActuales.length);
+      
+      return true;
+    } catch (error) {
+      console.error('Error al agregar nueva dirección:', error);
+      return false;
+    }
+  };
+
+  // Función para concatenar prefijo con teléfono para WhatsApp
+  const concatenarTelefonoWhatsApp = (telefono, prefijo) => {
+    const prefijosWhatsApp = {
+      'Ecuador': '593',
+      'Nicaragua': '505',
+      'Colombia': '57',
+      'Peru': '51',
+      'Chile': '56',
+      'Argentina': '54',
+      'Mexico': '52',
+      'Espana': '34',
+      'Estados Unidos': '1'
+    };
+    
+    const codigoPais = prefijosWhatsApp[prefijo] || '593'; // Por defecto Ecuador
+    let telefonoLimpio = telefono.replace(/\D/g, ''); // Remover caracteres no numéricos
+    
+    // Remover el 0 inicial si existe
+    if (telefonoLimpio.startsWith('0')) {
+      telefonoLimpio = telefonoLimpio.substring(1);
+    }
+    
+    return `${codigoPais}${telefonoLimpio}`;
+  };
+
+  // Función para actualizar coordenadas de cliente existente (solo para teléfonos de 7 dígitos y celulares)
+  const actualizarCoordenadasCliente = async (telefono, nuevasCoordenadas, nuevaDireccion) => {
+    try {
+      // Solo actualizar si el teléfono tiene 7 dígitos o es celular (9-10 dígitos)
+      if (telefono.length !== 7 && (telefono.length < 9 || telefono.length > 10)) {
+        console.log('⚠️ Solo se actualizan coordenadas para teléfonos de 7 dígitos o celulares (9-10 dígitos)');
+        return false;
+      }
+
+      console.log('📍 Actualizando coordenadas para cliente:', telefono);
+      
+      // Determinar la colección según la longitud del teléfono
+      let coleccionNombre = '';
+      if (telefono.length === 7) {
+        coleccionNombre = 'clientes';
+      } else if (telefono.length >= 9 && telefono.length <= 10) {
+        coleccionNombre = 'clientestelefonos';
+      } else {
+        console.log('❌ Tipo de teléfono no válido para actualizar coordenadas');
+        return false;
+      }
+      
+      // Buscar el cliente en la colección correspondiente
+      let telefonoId = telefono;
+      let clienteRef;
+      let clienteSnapshot;
+      
+      if (telefono.length >= 9 && telefono.length <= 10) {
+        // Para celulares, intentar primero con telefonoCompleto (Ecuador por defecto)
+        const telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+        console.log('📱 Intentando buscar cliente con telefonoCompleto:', telefonoCompleto);
+        
+        clienteRef = doc(db, coleccionNombre, telefonoCompleto);
+        clienteSnapshot = await getDoc(clienteRef);
+        
+        if (clienteSnapshot.exists()) {
+          telefonoId = telefonoCompleto;
+          console.log('✅ Cliente encontrado con telefonoCompleto como ID');
+        } else {
+          // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
+        telefonoId = telefono.slice(-9);
+          console.log('📱 Intentando con últimos 9 dígitos como fallback:', telefonoId);
+          clienteRef = doc(db, coleccionNombre, telefonoId);
+          clienteSnapshot = await getDoc(clienteRef);
+        }
+      } else {
+        // Para teléfonos de 7 dígitos, usar el teléfono original
+        clienteRef = doc(db, coleccionNombre, telefonoId);
+        clienteSnapshot = await getDoc(clienteRef);
+      }
+      
+      if (!clienteSnapshot.exists()) {
+        throw new Error('Cliente no encontrado');
+      }
+
+      const clienteData = clienteSnapshot.data();
+      const direccionesActuales = clienteData.direcciones || [];
+      
+      // Buscar si ya existe una dirección con coordenadas
+      const direccionConCoordenadas = direccionesActuales.find(dir => dir.coordenadas && dir.coordenadas.trim() !== '');
+      
+      if (direccionConCoordenadas) {
+        // Actualizar las coordenadas existentes
+        direccionConCoordenadas.coordenadas = nuevasCoordenadas;
+        direccionConCoordenadas.direccion = nuevaDireccion;
+        direccionConCoordenadas.fechaActualizacion = new Date();
+        console.log('📍 Coordenadas actualizadas en dirección existente:', direccionConCoordenadas);
+      } else {
+        // Agregar nueva dirección con coordenadas
+        const nuevaDireccionData = {
+          direccion: nuevaDireccion,
+          coordenadas: nuevasCoordenadas,
+          fechaRegistro: new Date(),
+          activa: true,
+          modoRegistro: 'aplicacion'
+        };
+        
+        direccionesActuales.push(nuevaDireccionData);
+        console.log('📍 Nueva dirección con coordenadas agregada:', nuevaDireccionData);
+      }
+      
+      // Actualizar el documento del cliente
+      await updateDoc(clienteRef, {
+        direcciones: direccionesActuales
+      });
+      
+      console.log('✅ Coordenadas actualizadas exitosamente para el cliente:', telefono);
+      return true;
+      
+    } catch (error) {
+      console.error('💥 Error al actualizar coordenadas del cliente:', error);
+      return false;
+    }
+  };
+
   const limpiarFormulario = () => {
     setTelefono('');
     setNombre('');
@@ -728,11 +1432,18 @@ function TaxiForm() {
     setMostrarModal(false);
     setNuevoCliente({ nombre: '', direccion: '', coordenadas: '', email: '' });
     setMapaVisible(false); // Oculta el mapa
+    // Limpiar direcciones guardadas
+    setDireccionesGuardadas([]);
+    setDireccionSeleccionada(null);
+    // Limpiar estados de edición
+    setEditandoDireccion(null);
+    setTextoEditado('');
   };
 
      // Función para insertar pedido disponible
    const handleInsertarViajePendiente = async () => {
      try {
+
        const fecha = new Date(); // Timestamp
        const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
        
@@ -741,12 +1452,44 @@ function TaxiForm() {
        const coordenadasFinales = coordenadas || coordenadasPorDefecto;
        const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
        
+       // Determinar el teléfono completo para WhatsApp
+       let telefonoCompleto = telefono || '';
+       if (telefono && telefono.length >= 9 && telefono.length <= 10) {
+         // Para celulares, buscar el cliente y obtener su prefijo
+         try {
+           // Intentar primero con telefonoCompleto (Ecuador por defecto)
+           const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+           let clienteRef = doc(db, 'clientestelefonos', telefonoCompletoBusqueda);
+           let clienteSnapshot = await getDoc(clienteRef);
+           
+           if (clienteSnapshot.exists()) {
+             const clienteData = clienteSnapshot.data();
+             telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
+             console.log('📱 Teléfono completo para WhatsApp:', telefonoCompleto);
+           } else {
+             // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
+             const telefonoBusqueda = telefono.slice(-9);
+             clienteRef = doc(db, 'clientestelefonos', telefonoBusqueda);
+             clienteSnapshot = await getDoc(clienteRef);
+             
+             if (clienteSnapshot.exists()) {
+               const clienteData = clienteSnapshot.data();
+               telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
+               console.log('📱 Teléfono completo para WhatsApp (fallback):', telefonoCompleto);
+             }
+           }
+         } catch (error) {
+           console.log('⚠️ No se pudo obtener el prefijo del cliente, usando teléfono original');
+         }
+       }
+       
        const pedidoData = {
          // Estructura basada en tu colección pedidosDisponibles
          clave: clave,
          codigo: nombre || '',
          nombreCliente: nombre || '',
-         telefono: telefono || '',
+         telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
+         telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
          direccion: direccion || '',
          destino: '', // Se puede editar después
          fecha: fecha,
@@ -776,6 +1519,11 @@ function TaxiForm() {
        
        // Actualizar el documento con su propio ID
        await updateDoc(docRef, { id: docRef.id });
+       
+       // Guardar en historial del cliente si hay dirección
+       if (telefono && direccion) {
+         await guardarEnHistorialCliente(telefono, direccion, coordenadas, 'manual');
+       }
        
        // Los listeners en tiempo real actualizarán automáticamente las tablas
        
@@ -825,6 +1573,9 @@ function TaxiForm() {
       // Obtener datos del conductor
       const conductorData = conductoresSnapshot.docs[0].data();
       
+       // Generar ID único para asignación manual
+       const idConductorManual = `conductor_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@manual.com`;
+      
        // Coordenadas por defecto si no hay coordenadas
        const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
        const coordenadasFinales = coordenadas || coordenadasPorDefecto;
@@ -833,19 +1584,52 @@ function TaxiForm() {
        const fecha = new Date(); // Timestamp
        const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
        
+       // Determinar el teléfono completo para WhatsApp
+       let telefonoCompleto = telefono || '';
+       if (telefono && telefono.length >= 9 && telefono.length <= 10) {
+         // Para celulares, buscar el cliente y obtener su prefijo
+         try {
+           // Intentar primero con telefonoCompleto (Ecuador por defecto)
+           const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+           let clienteRef = doc(db, 'clientestelefonos', telefonoCompletoBusqueda);
+           let clienteSnapshot = await getDoc(clienteRef);
+           
+           if (clienteSnapshot.exists()) {
+             const clienteData = clienteSnapshot.data();
+             telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
+             console.log('📱 Teléfono completo para WhatsApp:', telefonoCompleto);
+           } else {
+             // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
+             const telefonoBusqueda = telefono.slice(-9);
+             clienteRef = doc(db, 'clientestelefonos', telefonoBusqueda);
+             clienteSnapshot = await getDoc(clienteRef);
+             
+             if (clienteSnapshot.exists()) {
+               const clienteData = clienteSnapshot.data();
+               telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
+               console.log('📱 Teléfono completo para WhatsApp (fallback):', telefonoCompleto);
+             }
+           }
+         } catch (error) {
+           console.log('⚠️ No se pudo obtener el prefijo del cliente, usando teléfono original');
+         }
+       }
+       
        const pedidoEnCursoData = {
          // Estructura para pedidoEnCurso
          clave: clave,
          codigo: nombre || '',
          nombreCliente: nombre || '',
-         telefono: telefono || '',
+         telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
+         telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
          direccion: direccion || '',
          destino: 'QUITO-ECUADOR', // Destino por defecto
          fecha: fecha,
          estado: 'Aceptado',
          pedido: 'Aceptado',
-         // Datos del conductor
-         idConductor: conductorData.correo || conductorData.id || '',
+         // Datos del conductor - ID único para asignación manual
+         idConductor: idConductorManual, // ID único generado
+         correo: conductorData.correo || conductorData.id || '', // Correo real del conductor
          nombre: conductorData.nombre || '',
          nombreConductor: conductorData.nombre || '',
          placa: conductorData.placa || '',
@@ -876,7 +1660,8 @@ function TaxiForm() {
          rango: coordenadas ? '1' : '0', // Rango 0 si no hay coordenadas
          viajes: unidad || '',
          tarifaSeleccionada: true,
-         modoSeleccion: 'manual'
+         modoSeleccion: 'manual',
+         modoAsignacion: 'manual' // Campo adicional para indicar asignación manual
        };
 
        // Guardar directamente en la colección "pedidoEnCurso"
@@ -884,6 +1669,11 @@ function TaxiForm() {
        
        // Actualizar el documento con su propio ID
        await updateDoc(docRef, { id: docRef.id });
+       
+       // Guardar en historial del cliente si hay dirección
+       if (telefono && direccion) {
+         await guardarEnHistorialCliente(telefono, direccion, coordenadas, 'manual');
+       }
        
        // Los listeners en tiempo real actualizarán automáticamente las tablas
        
@@ -896,7 +1686,7 @@ function TaxiForm() {
        setModal({ 
          open: true, 
          success: true, 
-         message: `¡Pedido registrado directamente en "En Curso"!\nConductor: ${conductorData.nombre}\nUnidad: ${unidad}\nPlaca: ${conductorData.placa}\nTiempo: ${tiempo} min` 
+       ///  message: `¡Pedido registrado directamente en "En Curso"!\nConductor: ${conductorData.nombre}\nUnidad: ${unidad}\nPlaca: ${conductorData.placa}\nTiempo: ${tiempo} min` 
        });
     } catch (error) {
       console.error('Error al registrar el viaje:', error);
@@ -942,6 +1732,9 @@ function TaxiForm() {
        // Obtener datos del conductor
        const conductorData = conductoresSnapshot.docs[0].data();
 
+       // Generar ID único para asignación manual
+       const idConductorManual = `conductor_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@manual.com`;
+
        // 1. Obtener el pedido actual de pedidosDisponibles
        const pedidoOriginalRef = doc(db, 'pedidosDisponibles', viajeId);
        const pedidoOriginalSnap = await getDoc(pedidoOriginalRef);
@@ -964,8 +1757,9 @@ function TaxiForm() {
          pedido: 'Aceptado',
          // Fecha como timestamp
          fecha: new Date(),
-         // Datos del conductor
-         idConductor: conductorData.correo || conductorData.id || '',
+         // Datos del conductor - ID único para asignación manual
+         idConductor: idConductorManual, // ID único generado
+         correo: conductorData.correo || conductorData.id || '', // Correo real del conductor
          nombre: conductorData.nombre || '',
            nombreConductor: conductorData.nombre || '',
            placa: conductorData.placa || '',
@@ -976,7 +1770,8 @@ function TaxiForm() {
          distancia: '0.00 Mts', // Valor inicial
          latitudConductor: '',
          longitudConductor: '',
-         tarifaSeleccionada: true
+         tarifaSeleccionada: true,
+         modoAsignacion: 'manual' // Campo adicional para indicar asignación manual
        };
 
        // 3. Agregar a pedidoEnCurso
@@ -987,6 +1782,16 @@ function TaxiForm() {
 
        // 4. Eliminar de pedidosDisponibles
        await deleteDoc(pedidoOriginalRef);
+
+       // Guardar en historial del cliente si hay dirección
+       if (pedidoOriginal.telefono && pedidoOriginal.direccion) {
+         await guardarEnHistorialCliente(
+           pedidoOriginal.telefono, 
+           pedidoOriginal.direccion, 
+           `${pedidoOriginal.latitud || ''},${pedidoOriginal.longitud || ''}`, 
+           'manual'
+         );
+       }
 
        // Cancelar edición - los listeners en tiempo real actualizarán automáticamente las tablas
        cancelarEdicionViaje();
@@ -1002,26 +1807,11 @@ function TaxiForm() {
      }
    };
 
-   function generarIdRandom(length = 20) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  }
-
-  function generarRandon(length = 6) {
-    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-    let result = '';
-    for (let i = 0; i < length; i++) {
-      result += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return result;
-  }
+ 
 
   const handleSolicitarAplicacion = async () => {
     try {
+
       // Coordenadas por defecto si no hay coordenadas
       const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
       const coordenadasFinales = coordenadas || coordenadasPorDefecto;
@@ -1029,13 +1819,45 @@ function TaxiForm() {
       const fecha = new Date(); // Timestamp
       const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
       
+      // Determinar el teléfono completo para WhatsApp
+      let telefonoCompleto = telefono || '';
+      if (telefono && telefono.length >= 9 && telefono.length <= 10) {
+        // Para celulares, buscar el cliente y obtener su prefijo
+        try {
+          // Intentar primero con telefonoCompleto (Ecuador por defecto)
+          const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+          let clienteRef = doc(db, 'clientestelefonos', telefonoCompletoBusqueda);
+          let clienteSnapshot = await getDoc(clienteRef);
+          
+          if (clienteSnapshot.exists()) {
+            const clienteData = clienteSnapshot.data();
+            telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
+            console.log('📱 Teléfono completo para WhatsApp:', telefonoCompleto);
+          } else {
+            // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
+            const telefonoBusqueda = telefono.slice(-9);
+            clienteRef = doc(db, 'clientestelefonos', telefonoBusqueda);
+            clienteSnapshot = await getDoc(clienteRef);
+            
+            if (clienteSnapshot.exists()) {
+              const clienteData = clienteSnapshot.data();
+              telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
+              console.log('📱 Teléfono completo para WhatsApp (fallback):', telefonoCompleto);
+            }
+          }
+        } catch (error) {
+          console.log('⚠️ No se pudo obtener el prefijo del cliente, usando teléfono original');
+        }
+      }
+      
       // Datos para inserción directa en pedidosDisponibles
       const pedidoData = {
         // Datos básicos del pedido
         clave: clave,
         codigo: nombre || '',
         nombreCliente: nombre || '',
-        telefono: telefono || '',
+        telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
+        telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
         direccion: direccion || '',
         destino: 'QUITO-ECUADOR',
         fecha: fecha, // Timestamp
@@ -1073,6 +1895,11 @@ function TaxiForm() {
       // Actualizar el documento con su propio ID
       await updateDoc(docRef, { id: docRef.id });
       
+      // Guardar en historial del cliente si hay dirección
+      if (telefono && direccion) {
+        await guardarEnHistorialCliente(telefono, direccion, coordenadas, 'aplicacion');
+      }
+      
       // Los listeners en tiempo real actualizarán automáticamente las tablas
       
        // Ocultar el mapa después del registro exitoso
@@ -1081,7 +1908,7 @@ function TaxiForm() {
        // Limpiar el formulario
        limpiarFormulario();
 
-      setModal({ open: true, success: true, message: '¡Pedido registrado directamente en la base de datos!' });
+     /// setModal({ open: true, success: true, message: '¡Pedido registrado directamente en la base de datos!' });
     } catch (error) {
       console.error('Error al registrar el pedido:', error);
       setModal({ open: true, success: false, message: 'Error al registrar el pedido en la base de datos.' });
@@ -1095,43 +1922,221 @@ function TaxiForm() {
     // Ocultar el mapa automáticamente
     setMapaVisible(false);
     
-    // Guardar coordenadas y dirección en subcolección del usuario si existe
-    if (telefono && direccion && nuevasCoordenadas) {
-      try {
-        // Determinar la colección base según el tipo de teléfono
-        const coleccionBase = telefono.length === 7 ? 'usuarios' : 'usuariosfijos';
-        
-        // Buscar el usuario por teléfono
-        const qUsuario = query(
-          collection(db, coleccionBase),
-          where("telefono", "==", telefono)
-        );
-        
-        const snapshotUsuario = await getDocs(qUsuario);
-        
-        if (!snapshotUsuario.empty) {
-          const userDoc = snapshotUsuario.docs[0];
-          const direccionData = {
-            direccion: direccion,
-            coordenadas: nuevasCoordenadas,
-            fechaRegistro: new Date().toISOString(),
-            activa: true
-          };
-          
-          // Guardar en subcolección 'direcciones' del usuario
-          await addDoc(collection(db, coleccionBase, userDoc.id, 'direcciones'), direccionData);
-          
-          console.log('Dirección guardada en subcolección del usuario');
-        }
-      } catch (error) {
-        console.error('Error al guardar dirección en subcolección:', error);
-      }
-    }
-  }, [telefono, direccion, setMapaVisible]);
+    // NOTA: Se eliminó la funcionalidad de guardado automático de coordenadas
+    // Las coordenadas solo se guardarán cuando se envíe un pedido real
+  }, [setMapaVisible]);
 
   const handleAddressSelect = useCallback((nuevaDireccion) => {
     setDireccion(nuevaDireccion);
   }, []);
+
+  // Función para guardar coordenadas y direcciones en el historial del cliente
+  const guardarEnHistorialCliente = async (telefono, direccion, coordenadas, modoRegistro = 'manual') => {
+    try {
+      if (!telefono || !direccion) {
+        console.log('⚠️ No se pueden guardar coordenadas sin teléfono o dirección');
+        return false;
+      }
+
+      console.log('📍 Guardando en historial del cliente:', { telefono, direccion, coordenadas, modoRegistro });
+
+      // Determinar la colección según la longitud del teléfono
+      let coleccionNombre = '';
+      if (telefono.length === 7) {
+        coleccionNombre = 'clientes';
+      } else if (telefono.length >= 9 && telefono.length <= 10) {
+        coleccionNombre = 'clientestelefonos';
+      } else {
+        console.log('❌ Tipo de teléfono no válido para guardar historial');
+        return false;
+      }
+
+      // Buscar el cliente en la colección correspondiente
+      let telefonoId = telefono;
+      let clienteRef;
+      let clienteSnapshot;
+
+      if (telefono.length >= 9 && telefono.length <= 10) {
+        // Para celulares, intentar primero con telefonoCompleto (Ecuador por defecto)
+        const telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+        console.log('📱 Intentando buscar cliente con telefonoCompleto:', telefonoCompleto);
+
+        clienteRef = doc(db, coleccionNombre, telefonoCompleto);
+        clienteSnapshot = await getDoc(clienteRef);
+
+        if (clienteSnapshot.exists()) {
+          telefonoId = telefonoCompleto;
+          console.log('✅ Cliente encontrado con telefonoCompleto como ID');
+        } else {
+          // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
+          telefonoId = telefono.slice(-9);
+          console.log('📱 Intentando con últimos 9 dígitos como fallback:', telefonoId);
+          clienteRef = doc(db, coleccionNombre, telefonoId);
+          clienteSnapshot = await getDoc(clienteRef);
+        }
+      } else {
+        // Para teléfonos de 7 dígitos, usar el teléfono original
+        clienteRef = doc(db, coleccionNombre, telefonoId);
+        clienteSnapshot = await getDoc(clienteRef);
+      }
+
+      if (!clienteSnapshot.exists()) {
+        console.log('❌ Cliente no encontrado para guardar historial');
+        return false;
+      }
+
+      const clienteData = clienteSnapshot.data();
+      const direccionesActuales = clienteData.direcciones || [];
+
+      // Normalizar la dirección y coordenadas para comparación
+      const direccionNormalizada = direccion.toLowerCase().trim();
+      const coordenadasNormalizadas = coordenadas ? coordenadas.trim() : '';
+
+      // Verificar si ya existe esta dirección exacta O estas coordenadas exactas
+      const direccionExistente = direccionesActuales.find(dir => {
+        const dirNormalizada = dir.direccion.toLowerCase().trim();
+        const coordNormalizadas = dir.coordenadas ? dir.coordenadas.trim() : '';
+        
+        // Si la dirección es exactamente igual
+        if (dirNormalizada === direccionNormalizada) {
+          return true;
+        }
+        
+        // Si las coordenadas son exactamente iguales (y no están vacías)
+        if (coordenadasNormalizadas && coordNormalizadas && coordenadasNormalizadas === coordNormalizadas) {
+          return true;
+        }
+        
+        return false;
+      });
+
+      if (direccionExistente) {
+        // Si encontramos una dirección existente, actualizar información si es necesario
+        let actualizado = false;
+        
+        // Si la dirección es igual pero las coordenadas son diferentes, actualizar coordenadas
+        if (direccionExistente.direccion.toLowerCase().trim() === direccionNormalizada && 
+            direccionExistente.coordenadas !== coordenadasNormalizadas) {
+          direccionExistente.coordenadas = coordenadasNormalizadas;
+          direccionExistente.fechaActualizacion = new Date();
+          actualizado = true;
+          console.log('📍 Coordenadas actualizadas en dirección existente:', direccionExistente);
+        }
+        
+        // Si las coordenadas son iguales pero la dirección es diferente, actualizar dirección
+        else if (direccionExistente.coordenadas === coordenadasNormalizadas && 
+                 direccionExistente.direccion.toLowerCase().trim() !== direccionNormalizada) {
+          direccionExistente.direccion = direccion;
+          direccionExistente.fechaActualizacion = new Date();
+          actualizado = true;
+          console.log('📍 Dirección actualizada en coordenadas existentes:', direccionExistente);
+        }
+        
+        // Si tanto dirección como coordenadas son iguales, no hacer nada
+        else {
+          console.log('📍 Dirección y coordenadas ya existen exactamente iguales');
+        }
+        
+        // Solo actualizar en Firestore si hubo cambios
+        if (actualizado) {
+          await updateDoc(clienteRef, {
+            direcciones: direccionesActuales
+          });
+          console.log('✅ Historial actualizado exitosamente para el cliente:', telefono);
+        }
+        
+        return true;
+      } else {
+        // Agregar nueva dirección al historial solo si es realmente diferente
+        const nuevaDireccionData = {
+            direccion: direccion,
+          coordenadas: coordenadasNormalizadas,
+          fechaRegistro: new Date(),
+          activa: true,
+          modoRegistro: modoRegistro
+        };
+
+        direccionesActuales.push(nuevaDireccionData);
+        console.log('📍 Nueva dirección agregada al historial:', nuevaDireccionData);
+
+        // Actualizar el documento del cliente
+        await updateDoc(clienteRef, {
+          direcciones: direccionesActuales
+        });
+
+        console.log('✅ Historial actualizado exitosamente para el cliente:', telefono);
+        return true;
+      }
+
+      } catch (error) {
+      console.error('💥 Error al guardar en historial del cliente:', error);
+      return false;
+    }
+  };
+
+  // Función para mostrar direcciones guardadas del cliente
+  const mostrarDireccionesGuardadas = async (telefono) => {
+    try {
+      if (!telefono) return;
+
+      console.log('🔍 Buscando direcciones guardadas para:', telefono);
+
+      // Determinar la colección según la longitud del teléfono
+      let coleccionNombre = '';
+      if (telefono.length === 7) {
+        coleccionNombre = 'clientes';
+      } else if (telefono.length >= 9 && telefono.length <= 10) {
+        coleccionNombre = 'clientestelefonos';
+      } else {
+        return;
+      }
+
+      // Buscar el cliente
+      let telefonoId = telefono;
+      let clienteRef;
+      let clienteSnapshot;
+
+      if (telefono.length >= 9 && telefono.length <= 10) {
+        const telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+        clienteRef = doc(db, coleccionNombre, telefonoCompleto);
+        clienteSnapshot = await getDoc(clienteRef);
+
+        if (clienteSnapshot.exists()) {
+          telefonoId = telefonoCompleto;
+        } else {
+          telefonoId = telefono.slice(-9);
+          clienteRef = doc(db, coleccionNombre, telefonoId);
+          clienteSnapshot = await getDoc(clienteRef);
+        }
+      } else {
+        clienteRef = doc(db, coleccionNombre, telefonoId);
+        clienteSnapshot = await getDoc(clienteRef);
+      }
+
+      if (clienteSnapshot.exists()) {
+        const clienteData = clienteSnapshot.data();
+        const direcciones = clienteData.direcciones || [];
+
+        if (direcciones.length > 0) {
+          console.log('📍 Direcciones encontradas:', direcciones.length);
+          
+          // Mostrar modal con direcciones guardadas
+          setModal({
+            open: true,
+            success: true,
+            message: `Direcciones guardadas (${direcciones.length}):\n\n${direcciones.map((dir, index) => 
+              `${index + 1}. ${dir.direccion}${dir.coordenadas ? ` (${dir.coordenadas})` : ''}`
+            ).join('\n')}`
+          });
+        } else {
+          console.log('⚠️ No hay direcciones guardadas para este cliente');
+        }
+      }
+    } catch (error) {
+      console.error('Error al buscar direcciones guardadas:', error);
+    }
+  };
+
 
      return (
      <div style={{
@@ -1151,6 +2156,7 @@ function TaxiForm() {
             placeholder="Ingrese Teléfono"
             value={telefono}
             onChange={handleTelefonoChange}
+            onKeyDown={handleTelefonoKeyDown}
             style={{
               padding: '12px 16px',
               border: `2px solid ${
@@ -1225,7 +2231,7 @@ function TaxiForm() {
             value={direccion}
             onChange={(e) => setDireccion(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === 'Delete') {
+              if (e.key === 'Delete' || e.key === 'Enter') {
                 e.preventDefault();
                 handleInsertarViajePendiente();
               }
@@ -1375,6 +2381,210 @@ function TaxiForm() {
              </>
            )}
         </div>
+
+        {/* Listado de direcciones guardadas - JUSTO DESPUÉS DEL INPUT DE DIRECCIÓN */}
+        {direccionesGuardadas.length > 0 && (
+          <div style={{ marginBottom: 15 }}>
+            <div style={{ 
+              fontSize: 16, 
+              fontWeight: 'bold', 
+              color: '#374151', 
+              marginBottom: 8,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}>
+              📍 Direcciones guardadas ({direccionesGuardadas.length}):
+            </div>
+            <div style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              gap: 8,
+              maxHeight: 200,
+              overflowY: 'auto',
+              border: '1px solid #d1d5db',
+              borderRadius: 6,
+              padding: 8,
+              backgroundColor: '#f9fafb'
+            }}>
+              {direccionesGuardadas.map((dir, index) => (
+                <div
+                  key={index}
+                  style={{
+                    padding: '10px 12px',
+                    border: direccionSeleccionada === dir ? '2px solid #3b82f6' : '1px solid #d1d5db',
+                    borderRadius: 4,
+                    backgroundColor: direccionSeleccionada === dir ? '#eff6ff' : 'white',
+                    transition: 'all 0.2s ease',
+                    fontSize: 14,
+                    lineHeight: 1.4,
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <div 
+                    style={{ flex: 1, cursor: 'pointer' }}
+                    onClick={() => seleccionarDireccion(dir)}
+                    onDoubleClick={() => iniciarEdicionDireccion(dir)}
+                    onMouseEnter={(e) => {
+                      if (direccionSeleccionada !== dir) {
+                        e.target.parentElement.style.backgroundColor = '#f3f4f6';
+                        e.target.parentElement.style.borderColor = '#9ca3af';
+                      }
+                    }}
+                    onMouseLeave={(e) => {
+                      if (direccionSeleccionada !== dir) {
+                        e.target.parentElement.style.backgroundColor = 'white';
+                        e.target.parentElement.style.borderColor = '#d1d5db';
+                      }
+                    }}
+                  >
+                    {editandoDireccion === dir ? (
+                      <input
+                        type="text"
+                        value={textoEditado}
+                        onChange={(e) => setTextoEditado(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            guardarEdicionDireccion();
+                          } else if (e.key === 'Escape') {
+                            cancelarEdicionDireccion();
+                          }
+                        }}
+                        style={{
+                          width: '100%',
+                          padding: '4px 8px',
+                          border: '1px solid #3b82f6',
+                          borderRadius: 3,
+                          fontSize: 14,
+                          fontWeight: 'bold'
+                        }}
+                        autoFocus
+                      />
+                    ) : (
+                      <div style={{ fontWeight: 'bold', color: '#1f2937', marginBottom: 4 }}>
+                        {dir.direccion}
+                      </div>
+                    )}
+                    {dir.coordenadas && (
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>
+                        📍 {dir.coordenadas}
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* Botones de acción dentro de la tarjeta */}
+                  <div style={{ display: 'flex', gap: 4, marginLeft: 8 }}>
+                    {editandoDireccion === dir ? (
+                      <>
+                        {/* Botón Guardar */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            guardarEdicionDireccion();
+                          }}
+                          style={{
+                            background: '#10b981',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: 3,
+                            padding: '4px 8px',
+                            fontSize: 11,
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            opacity: 0.9,
+                            transition: 'opacity 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.opacity = 1}
+                          onMouseLeave={(e) => e.target.style.opacity = 0.9}
+                          title="Guardar cambios"
+                        >
+                          ✅
+                        </button>
+                        {/* Botón Cancelar */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            cancelarEdicionDireccion();
+                          }}
+                          style={{
+                            background: '#6b7280',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: 3,
+                            padding: '4px 8px',
+                            fontSize: 11,
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            opacity: 0.9,
+                            transition: 'opacity 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.opacity = 1}
+                          onMouseLeave={(e) => e.target.style.opacity = 0.9}
+                          title="Cancelar edición"
+                        >
+                          ❌
+                        </button>
+                      </>
+                    ) : (
+                      <>
+                        {/* Botón Editar */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            iniciarEdicionDireccion(dir);
+                          }}
+                          style={{
+                            background: '#3b82f6',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: 3,
+                            padding: '4px 8px',
+                            fontSize: 11,
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            opacity: 0.8,
+                            transition: 'opacity 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.opacity = 1}
+                          onMouseLeave={(e) => e.target.style.opacity = 0.8}
+                          title="Editar dirección"
+                        >
+                          ✏️
+                        </button>
+                        {/* Botón Eliminar */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            eliminarDireccion(dir);
+                          }}
+                          style={{
+                            background: '#ef4444',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: 3,
+                            padding: '4px 8px',
+                            fontSize: 11,
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            opacity: 0.8,
+                            transition: 'opacity 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => e.target.style.opacity = 1}
+                          onMouseLeave={(e) => e.target.style.opacity = 0.8}
+                          title="Eliminar dirección"
+                        >
+                          ✕
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </form>
 
       {/* Google Maps con búsqueda de direcciones - solo en modo aplicación */}
@@ -1403,114 +2613,96 @@ function TaxiForm() {
         }}>
           <div style={{
             background: 'white',
-            padding: 30,
+            padding: 20,
             borderRadius: 8,
-            boxShadow: '0 4px 10px rgba(0,0,0,0.2)',
-            maxWidth: 400,
-            width: '90%'
+            width: 400,
+            maxWidth: '90%'
           }}>
-            <h2 style={{ marginBottom: 20, textAlign: 'center' }}>
-              Nuevo Cliente Registrado
-            </h2>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              registrarCliente();
-            }}>
-              <div style={{ marginBottom: 15 }}>
-                <label style={{ display: 'block', marginBottom: 5 }}>Nombre:</label>
-                <input
-                  type="text"
-                  value={nuevoCliente.nombre}
-                  onChange={(e) => setNuevoCliente({ ...nuevoCliente, nombre: e.target.value })}
-                  style={{
-                    padding: '10px 12px',
-                    border: '1px solid #ccc',
-                    borderRadius: 4,
-                    width: '100%',
-                    fontSize: 16
-                  }}
-                />
-              </div>
-              <div style={{ marginBottom: 15 }}>
-                <label style={{ display: 'block', marginBottom: 5 }}>Dirección:</label>
-                <input
-                  type="text"
-                  value={nuevoCliente.direccion}
-                  onChange={(e) => setNuevoCliente({ ...nuevoCliente, direccion: e.target.value })}
-                  style={{
-                    padding: '10px 12px',
-                    border: '1px solid #ccc',
-                    borderRadius: 4,
-                    width: '100%',
-                    fontSize: 16
-                  }}
-                />
-              </div>
-              <div style={{ marginBottom: 15 }}>
-                <label style={{ display: 'block', marginBottom: 5 }}>Coordenadas:</label>
-                <input
-                  type="text"
-                  value={nuevoCliente.coordenadas}
-                  onChange={(e) => setNuevoCliente({ ...nuevoCliente, coordenadas: e.target.value })}
-                  style={{
-                    padding: '10px 12px',
-                    border: '1px solid #ccc',
-                    borderRadius: 4,
-                    width: '100%',
-                    fontSize: 16
-                  }}
-                />
-              </div>
-              <div style={{ marginBottom: 15 }}>
-                <label style={{ display: 'block', marginBottom: 5 }}>Email (opcional):</label>
-                <input
-                  type="email"
-                  value={nuevoCliente.email}
-                  onChange={(e) => setNuevoCliente({ ...nuevoCliente, email: e.target.value })}
-                  style={{
-                    padding: '10px 12px',
-                    border: '1px solid #ccc',
-                    borderRadius: 4,
-                    width: '100%',
-                    fontSize: 16
-                  }}
-                />
-              </div>
-              <button
-                type="submit"
+            <h3 style={{ marginTop: 0, marginBottom: 15 }}>Registrar Nuevo Cliente</h3>
+            <div style={{ marginBottom: 15 }}>
+              <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>Nombre:</label>
+              <input
+                type="text"
+                value={nuevoCliente.nombre}
+                onChange={(e) => setNuevoCliente({...nuevoCliente, nombre: e.target.value})}
                 style={{
-                  padding: '12px 20px',
-                  background: '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 4,
-                  fontSize: 18,
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  width: '100%'
+                  width: '100%',
+                  padding: '8px',
+                  border: '1px solid #ccc',
+                  borderRadius: 4
                 }}
-              >
-                Registrar Cliente
-              </button>
+              />
+            </div>
+            <div style={{ marginBottom: 15 }}>
+              <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>Dirección:</label>
+              <input
+                type="text"
+                value={nuevoCliente.direccion}
+                onChange={(e) => setNuevoCliente({...nuevoCliente, direccion: e.target.value})}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  border: '1px solid #ccc',
+                  borderRadius: 4
+                }}
+              />
+            </div>
+            <div style={{ marginBottom: 15 }}>
+              <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>Coordenadas:</label>
+              <input
+                type="text"
+                value={nuevoCliente.coordenadas}
+                onChange={(e) => setNuevoCliente({...nuevoCliente, coordenadas: e.target.value})}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  border: '1px solid #ccc',
+                  borderRadius: 4
+                }}
+              />
+            </div>
+            <div style={{ marginBottom: 15 }}>
+              <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>Email:</label>
+              <input
+                type="email"
+                value={nuevoCliente.email}
+                onChange={(e) => setNuevoCliente({...nuevoCliente, email: e.target.value})}
+                style={{
+                  width: '100%',
+                  padding: '8px',
+                  border: '1px solid #ccc',
+                  borderRadius: 4
+                }}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button
-                type="button"
                 onClick={() => setMostrarModal(false)}
                 style={{
-                  padding: '12px 20px',
-                  background: '#ef4444',
+                  padding: '8px 16px',
+                  background: '#6b7280',
                   color: 'white',
                   border: 'none',
                   borderRadius: 4,
-                  fontSize: 18,
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  width: '100%',
-                  marginTop: 10
+                  cursor: 'pointer'
                 }}
               >
                 Cancelar
               </button>
-            </form>
+              <button
+                onClick={registrarCliente}
+                style={{
+                  padding: '8px 16px',
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 4,
+                  cursor: 'pointer'
+                }}
+              >
+                Registrar
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -2168,6 +3360,452 @@ function TaxiForm() {
         )}
       </div>
 
+      {/* Modal de registro de clientes */}
+      {modalRegistroCliente.open && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '30px',
+            borderRadius: '12px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            width: modalRegistroCliente.modoAplicacion ? '800px' : '500px',
+            maxWidth: '90vw',
+            maxHeight: '90vh',
+            overflow: 'auto'
+          }}>
+            <h2 style={{
+              margin: '0 0 20px 0',
+              color: '#1f2937',
+              fontSize: '24px',
+              fontWeight: 'bold',
+              textAlign: 'center'
+            }}>
+              📝 Registrar {modalRegistroCliente.tipoCliente}
+              {modalRegistroCliente.modoAplicacion && ' (Modo Aplicación)'}
+            </h2>
+            
+            <p style={{
+              margin: '0 0 20px 0',
+              color: '#6b7280',
+              fontSize: '16px',
+              textAlign: 'center'
+            }}>
+              El teléfono <strong>{telefono}</strong> no está registrado en la colección <strong>{modalRegistroCliente.coleccion}</strong>.
+              <br />
+              ¿Deseas registrarlo ahora?
+            </p>
+
+            {/* Formulario en la parte superior */}
+            <div style={{ marginBottom: '20px' }}>
+              <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                <div style={{ flex: '1', minWidth: '200px' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontWeight: 'bold',
+                    color: '#374151'
+                  }}>
+                    Nombre del cliente:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ingrese el nombre completo *"
+                    value={modalRegistroCliente.datosCliente.nombre}
+                    onChange={(e) => setModalRegistroCliente(prev => ({
+                      ...prev,
+                      datosCliente: { ...prev.datosCliente, nombre: e.target.value }
+                    }))}
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      border: `2px solid ${modalRegistroCliente.datosCliente.nombre.trim() ? '#10b981' : '#ef4444'}`,
+                      borderRadius: '8px',
+                      fontSize: '16px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                <div style={{ flex: '1', minWidth: '200px' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontWeight: 'bold',
+                    color: '#374151'
+                  }}>
+                    Sector:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ingrese el sector *"
+                    value={modalRegistroCliente.datosCliente.sector}
+                    onChange={(e) => setModalRegistroCliente(prev => ({
+                      ...prev,
+                      datosCliente: { ...prev.datosCliente, sector: e.target.value }
+                    }))}
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      border: `2px solid ${modalRegistroCliente.datosCliente.sector.trim() ? '#10b981' : '#ef4444'}`,
+                      borderRadius: '8px',
+                      fontSize: '16px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+
+                <div style={{ flex: '1', minWidth: '200px' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontWeight: 'bold',
+                    color: '#374151'
+                  }}>
+                    Prefijo País:
+                  </label>
+                  <select
+                    value={modalRegistroCliente.datosCliente.prefijo}
+                    onChange={(e) => setModalRegistroCliente(prev => ({
+                      ...prev,
+                      datosCliente: { ...prev.datosCliente, prefijo: e.target.value }
+                    }))}
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      border: '2px solid #d1d5db',
+                      borderRadius: '8px',
+                      fontSize: '16px',
+                      boxSizing: 'border-box'
+                    }}
+                  >
+                    <option value="Ecuador">Ecuador</option>
+                    <option value="Nicaragua">Nicaragua</option>
+                    <option value="Colombia">Colombia</option>
+                    <option value="Peru">Perú</option>
+                    <option value="Chile">Chile</option>
+                    <option value="Argentina">Argentina</option>
+                    <option value="Mexico">México</option>
+                    <option value="Espana">España</option>
+                    <option value="Estados Unidos">Estados Unidos</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            {/* Campo de dirección para modo manual */}
+            {!modalRegistroCliente.modoAplicacion && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ width: '100%' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '8px',
+                    fontWeight: 'bold',
+                    color: '#374151'
+                  }}>
+                    Dirección:
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Ingrese la dirección completa *"
+                    value={modalRegistroCliente.datosCliente.direccion}
+                    onChange={(e) => setModalRegistroCliente(prev => ({
+                      ...prev,
+                      datosCliente: { ...prev.datosCliente, direccion: e.target.value }
+                    }))}
+                    required
+                    style={{
+                      width: '100%',
+                      padding: '12px 16px',
+                      border: `2px solid ${modalRegistroCliente.datosCliente.direccion.trim() ? '#10b981' : '#ef4444'}`,
+                      borderRadius: '8px',
+                      fontSize: '16px',
+                      boxSizing: 'border-box'
+                    }}
+                  />
+                </div>
+              </div>
+            )}
+
+            {/* Campos de dirección y coordenadas para modo aplicación */}
+            {modalRegistroCliente.modoAplicacion && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{ display: 'flex', gap: '20px', flexWrap: 'wrap' }}>
+                  <div style={{ flex: '2', minWidth: '300px' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '8px',
+                      fontWeight: 'bold',
+                      color: '#374151'
+                    }}>
+                      Dirección (selecciona en el mapa):
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Busca una dirección o selecciona en el mapa *"
+                      value={modalRegistroCliente.datosCliente.direccion}
+                      onChange={(e) => setModalRegistroCliente(prev => ({
+                        ...prev,
+                        datosCliente: { ...prev.datosCliente, direccion: e.target.value }
+                      }))}
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        border: `2px solid ${modalRegistroCliente.datosCliente.direccion.trim() ? '#10b981' : '#ef4444'}`,
+                        borderRadius: '8px',
+                        fontSize: '16px',
+                        boxSizing: 'border-box'
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ flex: '1', minWidth: '200px' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: '8px',
+                      fontWeight: 'bold',
+                      color: '#374151'
+                    }}>
+                      Coordenadas:
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="Se seleccionarán automáticamente *"
+                      value={modalRegistroCliente.datosCliente.coordenadas}
+                      readOnly
+                      required
+                      style={{
+                        width: '100%',
+                        padding: '12px 16px',
+                        border: `2px solid ${modalRegistroCliente.datosCliente.coordenadas.trim() ? '#10b981' : '#ef4444'}`,
+                        borderRadius: '8px',
+                        fontSize: '16px',
+                        boxSizing: 'border-box',
+                        backgroundColor: '#f3f4f6'
+                      }}
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Mapa grande en la parte inferior (solo modo aplicación) */}
+            {modalRegistroCliente.modoAplicacion && (
+              <div style={{ marginBottom: '20px' }}>
+                <div style={{
+                  width: '100%',
+                  height: '400px',
+                  border: '2px solid #d1d5db',
+                  borderRadius: '8px',
+                  overflow: 'hidden'
+                }}>
+                  <MapaSelector 
+                    onCoordinatesSelect={(coords) => {
+                      setModalRegistroCliente(prev => ({
+                        ...prev,
+                        datosCliente: { ...prev.datosCliente, coordenadas: coords }
+                      }));
+                    }}
+                    onAddressSelect={(address) => {
+                      setModalRegistroCliente(prev => ({
+                        ...prev,
+                        datosCliente: { ...prev.datosCliente, direccion: address }
+                      }));
+                    }}
+                    coordenadas={modalRegistroCliente.datosCliente.coordenadas}
+                    direccionFormulario={modalRegistroCliente.datosCliente.direccion}
+                  />
+                </div>
+              </div>
+            )}
+
+            <div style={{
+              display: 'flex',
+              gap: '15px',
+              justifyContent: 'center',
+              marginTop: '20px'
+            }}>
+              <button
+                onClick={() => setModalRegistroCliente({ 
+                  open: false, 
+                  tipoCliente: '', 
+                  coleccion: '', 
+                  modoAplicacion: false,
+                  datosCliente: { nombre: '', direccion: '', coordenadas: '', sector: '', prefijo: 'Ecuador' } 
+                })}
+                style={{
+                  padding: '12px 24px',
+                  border: '2px solid #d1d5db',
+                  borderRadius: '8px',
+                  backgroundColor: 'white',
+                  color: '#374151',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                ❌ Cancelar
+              </button>
+              
+              <button
+                                  onClick={async () => {
+                    // Validar campos obligatorios
+                    if (!modalRegistroCliente.datosCliente.nombre.trim()) {
+                      setModal({ 
+                        open: true, 
+                        success: false, 
+                        message: 'Por favor, complete el nombre del cliente.' 
+                      });
+                      return;
+                    }
+
+                    if (!modalRegistroCliente.datosCliente.sector.trim()) {
+                      setModal({ 
+                        open: true, 
+                        success: false, 
+                        message: 'Por favor, complete el sector del cliente.' 
+                      });
+                      return;
+                    }
+
+                    if (modalRegistroCliente.modoAplicacion) {
+                      if (!modalRegistroCliente.datosCliente.direccion.trim()) {
+                        setModal({ 
+                          open: true, 
+                          success: false, 
+                          message: 'En modo aplicación, debes seleccionar una dirección en el mapa.' 
+                        });
+                        return;
+                      }
+                      
+                      if (!modalRegistroCliente.datosCliente.coordenadas.trim()) {
+                        setModal({ 
+                          open: true, 
+                          success: false, 
+                          message: 'En modo aplicación, debes seleccionar coordenadas en el mapa.' 
+                        });
+                        return;
+                      }
+                    } else {
+                      if (!modalRegistroCliente.datosCliente.direccion.trim()) {
+                        setModal({ 
+                          open: true, 
+                          success: false, 
+                          message: 'Por favor, complete la dirección del cliente.' 
+                        });
+                        return;
+                      }
+                    }
+                  
+                  await registrarNuevoCliente(
+                    modalRegistroCliente.datosCliente, 
+                    modalRegistroCliente.tipoCliente,
+                    modalRegistroCliente.modoAplicacion
+                  );
+                  setModalRegistroCliente({ 
+                    open: false, 
+                    tipoCliente: '', 
+                    coleccion: '', 
+                    modoAplicacion: false,
+                    datosCliente: { nombre: '', direccion: '', coordenadas: '', sector: '', prefijo: 'Ecuador' } 
+                  });
+                }}
+                style={{
+                  padding: '12px 24px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#059669',
+                  color: 'white',
+                  fontSize: '16px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+              >
+                ✅ Registrar {modalRegistroCliente.tipoCliente}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de confirmación */}
+      {modal.open && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '30px',
+            borderRadius: '12px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            width: '400px',
+            maxWidth: '90vw',
+            textAlign: 'center'
+          }}>
+            <div style={{
+              fontSize: '48px',
+              marginBottom: '20px'
+            }}>
+              {modal.success ? '✅' : '❌'}
+            </div>
+            <h3 style={{
+              margin: '0 0 15px 0',
+              color: modal.success ? '#059669' : '#dc2626',
+              fontSize: '20px',
+              fontWeight: 'bold'
+            }}>
+              {modal.success ? 'Éxito' : 'Error'}
+            </h3>
+            <div style={{
+              fontSize: '16px',
+              marginBottom: '20px'
+            }}>
+              {modal.message}
+            </div>
+            <button
+              onClick={() => setModal({ open: false, success: true, message: '' })}
+              style={{
+                padding: '12px 24px',
+                border: 'none',
+                borderRadius: '8px',
+                backgroundColor: modal.success ? '#059669' : '#dc2626',
+                color: 'white',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              Aceptar
+            </button>
+          </div>
+        </div>
+      )}
+
+  
     </div>
   );
 }
@@ -2424,10 +4062,565 @@ function ConductoresContent() {
 }
 
 function ReportesContent() {
+  const [viajes, setViajes] = useState([]);
+  const [fechaInicio, setFechaInicio] = useState('');
+  const [fechaFin, setFechaFin] = useState('');
+  const [cargando, setCargando] = useState(false);
+  const [error, setError] = useState('');
+
+  // Función para obtener la fecha actual en formato DD-MM-YYYY
+  const obtenerFechaActual = () => {
+    const hoy = new Date();
+    const dia = String(hoy.getDate()).padStart(2, '0');
+    const mes = String(hoy.getMonth() + 1).padStart(2, '0');
+    const año = hoy.getFullYear();
+    return `${dia}-${mes}-${año}`;
+  };
+
+  // Función para cargar viajes por rango de fechas
+  const cargarViajesPorRango = async (fechaInicio, fechaFin) => {
+    setCargando(true);
+    setError('');
+    
+    try {
+      console.log('📊 Cargando viajes desde:', fechaInicio, 'hasta:', fechaFin);
+      
+      const todosLosViajes = [];
+      
+      // Generar array de fechas entre fechaInicio y fechaFin
+      const fechas = generarRangoFechas(fechaInicio, fechaFin);
+      
+      // Cargar viajes de cada fecha
+      for (const fecha of fechas) {
+        try {
+          const viajesRef = collection(db, 'todosLosViajes', fecha, 'viajes');
+          console.log('🔍 Consultando colección:', `todosLosViajes/${fecha}/viajes`);
+          
+          const viajesSnapshot = await getDocs(viajesRef);
+          
+          viajesSnapshot.forEach((doc) => {
+            const viaje = {
+              id: doc.id,
+              fecha: fecha || 'N/A',
+              ...doc.data()
+            };
+            todosLosViajes.push(viaje);
+            console.log('📄 Viaje encontrado:', doc.id, viaje.nombreCliente || viaje.nombre);
+          });
+        } catch (error) {
+          console.log(`⚠️ No se encontraron viajes para ${fecha}:`, error.message);
+        }
+      }
+      
+      console.log(`✅ Se encontraron ${todosLosViajes.length} viajes en total`);
+      setViajes(todosLosViajes);
+      
+    } catch (error) {
+      console.error('❌ Error al cargar viajes:', error);
+      
+      // Mensajes de error más específicos
+      if (error.code === 'permission-denied') {
+        setError('No tienes permisos para acceder a los viajes.');
+      } else {
+        setError(`Error al cargar los viajes: ${error.message}`);
+      }
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  // Función para generar rango de fechas
+  const generarRangoFechas = (fechaInicio, fechaFin) => {
+    if (!fechaInicio || !fechaFin) {
+      console.warn('⚠️ Fechas de inicio o fin no válidas:', { fechaInicio, fechaFin });
+      return [];
+    }
+    
+    const fechas = [];
+    const [diaInicio, mesInicio, añoInicio] = fechaInicio.split('-').map(Number);
+    const [diaFin, mesFin, añoFin] = fechaFin.split('-').map(Number);
+    
+    // Verificar que las fechas sean válidas
+    if (isNaN(diaInicio) || isNaN(mesInicio) || isNaN(añoInicio) || 
+        isNaN(diaFin) || isNaN(mesFin) || isNaN(añoFin)) {
+      console.error('❌ Formato de fecha inválido:', { fechaInicio, fechaFin });
+      return [];
+    }
+    
+    const fechaInicioObj = new Date(añoInicio, mesInicio - 1, diaInicio);
+    const fechaFinObj = new Date(añoFin, mesFin - 1, diaFin);
+    
+    // Verificar que las fechas sean válidas
+    if (isNaN(fechaInicioObj.getTime()) || isNaN(fechaFinObj.getTime())) {
+      console.error('❌ Fechas inválidas:', { fechaInicio, fechaFin });
+      return [];
+    }
+    
+    const fechaActual = new Date(fechaInicioObj);
+    
+    while (fechaActual <= fechaFinObj) {
+      const dia = String(fechaActual.getDate()).padStart(2, '0');
+      const mes = String(fechaActual.getMonth() + 1).padStart(2, '0');
+      const año = fechaActual.getFullYear();
+      fechas.push(`${dia}-${mes}-${año}`);
+      fechaActual.setDate(fechaActual.getDate() + 1);
+    }
+    
+    return fechas;
+  };
+
+  // Función para manejar cambio de fecha inicio
+  const handleFechaInicioChange = (e) => {
+    const fechaInput = e.target.value; // Formato YYYY-MM-DD
+    if (fechaInput) {
+      const [año, mes, dia] = fechaInput.split('-');
+      const fechaFormateada = `${dia}-${mes}-${año}`;
+      setFechaInicio(fechaFormateada);
+    }
+  };
+
+  // Función para manejar cambio de fecha fin
+  const handleFechaFinChange = (e) => {
+    const fechaInput = e.target.value; // Formato YYYY-MM-DD
+    if (fechaInput) {
+      const [año, mes, dia] = fechaInput.split('-');
+      const fechaFormateada = `${dia}-${mes}-${año}`;
+      setFechaFin(fechaFormateada);
+    }
+  };
+
+  // Función para aplicar filtros
+  const aplicarFiltros = () => {
+    if (fechaInicio && fechaFin) {
+      console.log('🔍 Aplicando filtros:', { fechaInicio, fechaFin });
+      cargarViajesPorRango(fechaInicio, fechaFin);
+    } else {
+      console.warn('⚠️ Fechas no válidas para filtrar:', { fechaInicio, fechaFin });
+      setError('Por favor, selecciona fechas de inicio y fin válidas.');
+    }
+  };
+
+  // Función para formatear fecha para mostrar
+  const formatearFechaMostrar = (fecha) => {
+    if (!fecha || typeof fecha !== 'string') return 'N/A';
+    const partes = fecha.split('-');
+    if (partes.length !== 3) return 'N/A';
+    const [dia, mes, año] = partes;
+    return `${dia}/${mes}/${año}`;
+  };
+
+  // Función para obtener estado con color
+  const obtenerEstadoConColor = (estado) => {
+    const colores = {
+      'Aceptado': '#10b981',
+      'Finalizado': '#3b82f6',
+      'En Curso': '#f59e0b',
+      'Cancelado': '#ef4444',
+      'Pendiente': '#6b7280'
+    };
+    
+    return {
+      texto: estado,
+      color: colores[estado] || '#6b7280'
+    };
+  };
+
+  // Cargar viajes de la fecha actual al montar el componente
+  useEffect(() => {
+    const fechaActual = obtenerFechaActual();
+    setFechaInicio(fechaActual);
+    setFechaFin(fechaActual);
+    cargarViajesPorRango(fechaActual, fechaActual);
+  }, []);
+
   return (
     <div style={{ padding: 20 }}>
-      <h2>Reportes del Sistema</h2>
-      <p>Visualiza reportes y estadísticas del sistema de taxis.</p>
+      <div style={{ marginBottom: 30 }}>
+        <h2 style={{ 
+          margin: '0 0 10px 0', 
+          color: '#1f2937',
+          fontSize: '28px',
+          fontWeight: 'bold'
+        }}>
+          📊 Reportes del Sistema
+        </h2>
+        <p style={{ 
+          margin: '0 0 20px 0', 
+          color: '#6b7280',
+          fontSize: '16px'
+        }}>
+          Visualiza todos los viajes por rango de fechas. Selecciona fechas de inicio y fin para filtrar los registros.
+        </p>
+        
+        {/* Filtros de fecha */}
+        <div style={{ 
+          display: 'flex', 
+          alignItems: 'center', 
+          gap: 15,
+          marginBottom: 20,
+          flexWrap: 'wrap'
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <label style={{ 
+              fontWeight: 'bold', 
+              color: '#374151',
+              fontSize: '16px'
+            }}>
+              📅 Desde:
+            </label>
+            <input
+              type="date"
+              value={fechaInicio ? fechaInicio.split('-').reverse().join('-') : ''}
+              onChange={handleFechaInicioChange}
+              style={{
+                padding: '10px 15px',
+                border: '2px solid #d1d5db',
+                borderRadius: '8px',
+                fontSize: '16px',
+                backgroundColor: 'white',
+                color: '#374151'
+              }}
+            />
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <label style={{ 
+              fontWeight: 'bold', 
+              color: '#374151',
+              fontSize: '16px'
+            }}>
+              📅 Hasta:
+            </label>
+            <input
+              type="date"
+              value={fechaFin ? fechaFin.split('-').reverse().join('-') : ''}
+              onChange={handleFechaFinChange}
+              style={{
+                padding: '10px 15px',
+                border: '2px solid #d1d5db',
+                borderRadius: '8px',
+                fontSize: '16px',
+                backgroundColor: 'white',
+                color: '#374151'
+              }}
+            />
+          </div>
+          
+          <button
+            onClick={aplicarFiltros}
+            style={{
+              background: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              transition: 'background 0.2s'
+            }}
+            onMouseEnter={(e) => e.target.style.background = '#2563eb'}
+            onMouseLeave={(e) => e.target.style.background = '#3b82f6'}
+          >
+            🔍 Buscar
+          </button>
+          
+          {fechaInicio && fechaFin && (
+            <span style={{ 
+              color: '#6b7280',
+              fontSize: '14px'
+            }}>
+              Mostrando viajes del {formatearFechaMostrar(fechaInicio)} al {formatearFechaMostrar(fechaFin)}
+            </span>
+          )}
+        </div>
+      </div>
+
+      {/* Estado de carga */}
+      {cargando && (
+        <div style={{ 
+          textAlign: 'center', 
+          padding: '40px',
+          color: '#6b7280'
+        }}>
+          <div style={{ fontSize: '24px', marginBottom: '10px' }}>⏳</div>
+          Cargando viajes...
+        </div>
+      )}
+
+      {/* Error */}
+      {error && (
+        <div style={{ 
+          background: '#fef2f2',
+          border: '1px solid #fecaca',
+          color: '#dc2626',
+          padding: '15px',
+          borderRadius: '8px',
+          marginBottom: '20px'
+        }}>
+          ❌ {error}
+        </div>
+      )}
+
+      {/* Tabla de viajes */}
+      {!cargando && !error && (
+        <div>
+          <div style={{ 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center',
+            marginBottom: '20px'
+          }}>
+            <h3 style={{ 
+              margin: 0, 
+              color: '#1f2937',
+              fontSize: '20px'
+            }}>
+              🚗 Viajes ({viajes.length})
+            </h3>
+            {viajes.length > 0 && (
+              <div style={{ 
+                color: '#6b7280',
+                fontSize: '14px'
+              }}>
+                Total de registros: {viajes.length}
+              </div>
+            )}
+          </div>
+
+          {viajes.length === 0 ? (
+            <div style={{ 
+              textAlign: 'center', 
+              padding: '60px 20px',
+              color: '#6b7280',
+              background: '#f9fafb',
+              borderRadius: '12px',
+              border: '2px dashed #d1d5db'
+            }}>
+              <div style={{ fontSize: '48px', marginBottom: '15px' }}>📭</div>
+              <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px' }}>
+                No hay viajes registrados
+              </div>
+              <div style={{ fontSize: '14px' }}>
+                No se encontraron viajes para el rango de fechas seleccionado
+              </div>
+            </div>
+          ) : (
+            <div style={{
+              background: 'white',
+              borderRadius: '12px',
+              border: '1px solid #e5e7eb',
+              overflow: 'hidden',
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+            }}>
+              <div style={{
+                overflowX: 'auto'
+              }}>
+                <table style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  fontSize: '14px'
+                }}>
+                  <thead>
+                    <tr style={{
+                      background: '#f8fafc',
+                      borderBottom: '2px solid #e5e7eb'
+                    }}>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        👤 Cliente
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        🚗 Vehículo
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        📍 Origen
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        🎯 Destino
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        💰 Valor
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        ⏱️ Tiempo
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        📱 Teléfono
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        👨‍💼 Conductor
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        🏷️ Estado
+                      </th>
+                      <th style={{
+                        padding: '15px 12px',
+                        textAlign: 'left',
+                        fontWeight: 'bold',
+                        color: '#374151',
+                        borderBottom: '1px solid #e5e7eb'
+                      }}>
+                        📅 Fecha
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {viajes.map((viaje, index) => {
+                      const estadoInfo = obtenerEstadoConColor(viaje.estado || viaje.pedido);
+                      
+                      return (
+                        <tr key={viaje.id} style={{
+                          borderBottom: '1px solid #f3f4f6',
+                          transition: 'background 0.2s'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = '#f9fafb';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'white';
+                        }}>
+                          <td style={{
+                            padding: '12px',
+                            color: '#1f2937',
+                            fontWeight: '500'
+                          }}>
+                            {viaje.nombreCliente || viaje.nombre || 'N/A'}
+                          </td>
+                          <td style={{
+                            padding: '12px',
+                            color: '#6b7280',
+                            fontSize: '13px'
+                          }}>
+                            {viaje.placa || 'Sin placa'} • {viaje.clave || viaje.id}
+                          </td>
+                          <td style={{
+                            padding: '12px',
+                            color: '#374151',
+                            maxWidth: '200px',
+                            wordWrap: 'break-word'
+                          }}>
+                            {viaje.direccion || 'N/A'}
+                          </td>
+                          <td style={{
+                            padding: '12px',
+                            color: '#374151',
+                            maxWidth: '200px',
+                            wordWrap: 'break-word'
+                          }}>
+                            {viaje.destino || 'N/A'}
+                          </td>
+                          <td style={{
+                            padding: '12px',
+                            color: '#059669',
+                            fontWeight: 'bold'
+                          }}>
+                            ${viaje.valor || viaje.montoTotalCalculado || '0.00'}
+                          </td>
+                          <td style={{
+                            padding: '12px',
+                            color: '#374151'
+                          }}>
+                            {viaje.tiempoTotal || (viaje.minutos ? `${viaje.minutos} min` : 'N/A')}
+                          </td>
+                          <td style={{
+                            padding: '12px',
+                            color: '#374151',
+                            fontFamily: 'monospace'
+                          }}>
+                            {viaje.telefono || 'N/A'}
+                          </td>
+                          <td style={{
+                            padding: '12px',
+                            color: '#374151'
+                          }}>
+                            {viaje.codigo || viaje.idConductor || 'N/A'}
+                          </td>
+                          <td style={{
+                            padding: '12px'
+                          }}>
+                            <span style={{
+                              background: estadoInfo.color,
+                              color: 'white',
+                              padding: '4px 8px',
+                              borderRadius: '12px',
+                              fontSize: '11px',
+                              fontWeight: 'bold',
+                              textTransform: 'uppercase'
+                            }}>
+                              {estadoInfo.texto}
+                            </span>
+                          </td>
+                          <td style={{
+                            padding: '12px',
+                            color: '#6b7280',
+                            fontSize: '13px'
+                          }}>
+                            {formatearFechaMostrar(viaje.fecha)}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -2471,3 +4664,6 @@ function MainContent({ activeSection }) {
 }
 
 export default MainContent; 
+
+
+
