@@ -4,6 +4,21 @@ import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, dele
 import { db } from "../firebaseConfig";
 // import axios from 'axios'; // Comentado porque no se usa
 
+/**
+ * Funcionalidad de tokens de conductores:
+ * - Cuando se asigna manualmente una unidad/conductor, se incluye el token FCM del conductor
+ * - El token se obtiene de los campos: token, fcmToken, o deviceToken del documento del conductor
+ * - Se valida que el token tenga al menos 100 caracteres para considerarlo válido
+ * - Se muestra un indicador visual en la gestión de conductores
+ * - Los mensajes de confirmación incluyen el estado del token
+ * 
+ * Funcionalidad de NotificaciOnenCurso:
+ * - Se crea un duplicado automático en la colección "NotificaciOnenCurso" 
+ * - Incluye todos los datos del pedido más campos específicos para notificaciones
+ * - Mantiene el mismo ID del documento original para referencia
+ * - Agrega fechaNotificacion y estadoNotificacion para seguimiento
+ */
+
 // Configuración de Google Maps
 const GOOGLE_MAPS_API_KEY = "AIzaSyBWqJ5_eaGfM6epbuChtkq0W5eqv2Ew37c";
 
@@ -1300,6 +1315,15 @@ function TaxiForm() {
     }
   };
 
+  // Función para validar si el token del conductor está configurado
+  const validarTokenConductor = (token) => {
+    if (!token || token.trim() === '') {
+      return false;
+    }
+    // Validar que el token tenga el formato básico de FCM (al menos 100 caracteres)
+    return token.length >= 100;
+  };
+
   // Función para concatenar prefijo con teléfono para WhatsApp
   const concatenarTelefonoWhatsApp = (telefono, prefijo) => {
     const prefijosWhatsApp = {
@@ -1545,6 +1569,7 @@ function TaxiForm() {
    };
 
    // Función para insertar viaje en modo manual
+   // Incluye el token del conductor para notificaciones push cuando se asigna manualmente
    const handleInsertarViaje = async () => {
      // Validaciones
      if (!tiempo.trim()) {
@@ -1575,7 +1600,11 @@ function TaxiForm() {
       
        // Generar ID único para asignación manual
        const idConductorManual = `conductor_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@manual.com`;
-      
+       
+       // Obtener el token del conductor (si existe)
+       const tokenConductor = conductorData.token || conductorData.fcmToken || conductorData.deviceToken || '';
+       const tokenValido = validarTokenConductor(tokenConductor);
+       
        // Coordenadas por defecto si no hay coordenadas
        const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
        const coordenadasFinales = coordenadas || coordenadasPorDefecto;
@@ -1636,6 +1665,7 @@ function TaxiForm() {
          color: conductorData.color || '',
          telefonoConductor: conductorData.telefono || '',
          foto: conductorData.foto || '',
+         tokenConductor: conductorData.token || '', // Token del conductor para notificaciones push (FCM)
          // Datos de asignación
          tiempo: tiempo,
          numeroUnidad: unidad,
@@ -1670,6 +1700,16 @@ function TaxiForm() {
        // Actualizar el documento con su propio ID
        await updateDoc(docRef, { id: docRef.id });
        
+       // Crear duplicado en la colección "NotificaciOnenCurso" para sistema de notificaciones
+       const notificacionEnCursoData = {
+         ...pedidoEnCursoData,
+         id: docRef.id, // Mantener el mismo ID del documento original para referencia
+         fechaNotificacion: new Date(), // Fecha específica para la notificación
+         estadoNotificacion: 'pendiente' // Estado de la notificación (pendiente, enviada, fallida)
+       };
+       
+       await addDoc(collection(db, 'NotificaciOnenCurso'), notificacionEnCursoData);
+       
        // Guardar en historial del cliente si hay dirección
        if (telefono && direccion) {
          await guardarEnHistorialCliente(telefono, direccion, coordenadas, 'manual');
@@ -1686,7 +1726,7 @@ function TaxiForm() {
        setModal({ 
          open: true, 
          success: true, 
-       ///  message: `¡Pedido registrado directamente en "En Curso"!\nConductor: ${conductorData.nombre}\nUnidad: ${unidad}\nPlaca: ${conductorData.placa}\nTiempo: ${tiempo} min` 
+         message: `¡Pedido registrado directamente en "En Curso"!\nConductor: ${conductorData.nombre}\nUnidad: ${unidad}\nPlaca: ${conductorData.placa}\nTiempo: ${tiempo} min${tokenValido ? '\n✅ Token de notificaciones configurado' : '\n⚠️ Token de notificaciones no configurado'}\n📋 Duplicado creado en "NotificaciOnenCurso"`
        });
     } catch (error) {
       console.error('Error al registrar el viaje:', error);
@@ -1709,6 +1749,7 @@ function TaxiForm() {
    };
 
    // Función para mover pedido de disponibles a en curso
+   // Incluye el token del conductor para notificaciones push cuando se asigna manualmente
    const guardarEdicionViaje = async (viajeId) => {
      if (!tiempoEdit.trim() || !unidadEdit.trim()) {
        setModal({ open: true, success: false, message: 'Por favor, ingrese tiempo y número de unidad.' });
@@ -1734,7 +1775,11 @@ function TaxiForm() {
 
        // Generar ID único para asignación manual
        const idConductorManual = `conductor_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@manual.com`;
-
+       
+              // Obtener el token del conductor (si existe)
+       const tokenConductor = conductorData.token || conductorData.fcmToken || conductorData.deviceToken || '';
+       const tokenValido = validarTokenConductor(tokenConductor);
+ 
        // 1. Obtener el pedido actual de pedidosDisponibles
        const pedidoOriginalRef = doc(db, 'pedidosDisponibles', viajeId);
        const pedidoOriginalSnap = await getDoc(pedidoOriginalRef);
@@ -1766,6 +1811,7 @@ function TaxiForm() {
          color: conductorData.color || '',
            telefonoConductor: conductorData.telefono || '',
          foto: conductorData.foto || '',
+         tokenConductor: conductorData.fcmToken || conductorData.token || conductorData.notificationToken || '', // Token del conductor para notificaciones
          minutos: parseInt(tiempoEdit) || 0,
          distancia: '0.00 Mts', // Valor inicial
          latitudConductor: '',
@@ -1780,7 +1826,17 @@ function TaxiForm() {
        // Actualizar el documento con su propio ID
        await updateDoc(docRef, { id: docRef.id });
 
-       // 4. Eliminar de pedidosDisponibles
+       // 4. Crear duplicado en la colección "NotificaciOnenCurso" para sistema de notificaciones
+       const notificacionEnCursoData = {
+         ...pedidoEnCursoData,
+         id: docRef.id, // Mantener el mismo ID del documento original para referencia
+         fechaNotificacion: new Date(), // Fecha específica para la notificación
+         estadoNotificacion: 'pendiente' // Estado de la notificación (pendiente, enviada, fallida)
+       };
+       
+       await addDoc(collection(db, 'NotificaciOnenCurso'), notificacionEnCursoData);
+
+       // 5. Eliminar de pedidosDisponibles
        await deleteDoc(pedidoOriginalRef);
 
        // Guardar en historial del cliente si hay dirección
@@ -1799,7 +1855,7 @@ function TaxiForm() {
        setModal({ 
          open: true, 
          success: true, 
-         message: `¡Pedido movido a "En Curso" exitosamente!\nConductor: ${conductorData.nombre}\nUnidad: ${unidadEdit}\nPlaca: ${conductorData.placa}` 
+         message: `¡Pedido movido a "En Curso" exitosamente!\nConductor: ${conductorData.nombre}\nUnidad: ${unidadEdit}\nPlaca: ${conductorData.placa}${tokenValido ? '\n✅ Token de notificaciones configurado' : '\n⚠️ Token de notificaciones no configurado'}\n📋 Duplicado creado en "NotificaciOnenCurso"` 
        });
      } catch (error) {
        console.error('Error al mover el pedido:', error);
@@ -2619,62 +2675,62 @@ function TaxiForm() {
             maxWidth: '90%'
           }}>
             <h3 style={{ marginTop: 0, marginBottom: 15 }}>Registrar Nuevo Cliente</h3>
-            <div style={{ marginBottom: 15 }}>
+              <div style={{ marginBottom: 15 }}>
               <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>Nombre:</label>
-              <input
-                type="text"
-                value={nuevoCliente.nombre}
+                <input
+                  type="text"
+                  value={nuevoCliente.nombre}
                 onChange={(e) => setNuevoCliente({...nuevoCliente, nombre: e.target.value})}
-                style={{
-                  width: '100%',
+                  style={{
+                    width: '100%',
                   padding: '8px',
                   border: '1px solid #ccc',
                   borderRadius: 4
-                }}
-              />
-            </div>
-            <div style={{ marginBottom: 15 }}>
+                  }}
+                />
+              </div>
+              <div style={{ marginBottom: 15 }}>
               <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>Dirección:</label>
-              <input
-                type="text"
-                value={nuevoCliente.direccion}
+                <input
+                  type="text"
+                  value={nuevoCliente.direccion}
                 onChange={(e) => setNuevoCliente({...nuevoCliente, direccion: e.target.value})}
-                style={{
-                  width: '100%',
+                  style={{
+                    width: '100%',
                   padding: '8px',
                   border: '1px solid #ccc',
                   borderRadius: 4
-                }}
-              />
-            </div>
-            <div style={{ marginBottom: 15 }}>
+                  }}
+                />
+              </div>
+              <div style={{ marginBottom: 15 }}>
               <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>Coordenadas:</label>
-              <input
-                type="text"
-                value={nuevoCliente.coordenadas}
+                <input
+                  type="text"
+                  value={nuevoCliente.coordenadas}
                 onChange={(e) => setNuevoCliente({...nuevoCliente, coordenadas: e.target.value})}
-                style={{
-                  width: '100%',
+                  style={{
+                    width: '100%',
                   padding: '8px',
                   border: '1px solid #ccc',
                   borderRadius: 4
-                }}
-              />
-            </div>
-            <div style={{ marginBottom: 15 }}>
+                  }}
+                />
+              </div>
+              <div style={{ marginBottom: 15 }}>
               <label style={{ display: 'block', marginBottom: 5, fontWeight: 'bold' }}>Email:</label>
-              <input
-                type="email"
-                value={nuevoCliente.email}
+                <input
+                  type="email"
+                  value={nuevoCliente.email}
                 onChange={(e) => setNuevoCliente({...nuevoCliente, email: e.target.value})}
-                style={{
-                  width: '100%',
+                  style={{
+                    width: '100%',
                   padding: '8px',
                   border: '1px solid #ccc',
                   borderRadius: 4
-                }}
-              />
-            </div>
+                  }}
+                />
+              </div>
             <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
               <button
                 onClick={() => setMostrarModal(false)}
@@ -3805,7 +3861,7 @@ function TaxiForm() {
         </div>
       )}
 
-  
+
     </div>
   );
 }
@@ -3984,6 +4040,30 @@ function ConductoresContent() {
                     <input name="color" value={editData.color || ''} onChange={handleChange} style={{ flex: 1, padding: 7, borderRadius: 4, border: '1px solid #ccc' }} />
                   ) : (
                     <span style={{ flex: 1 }}>{conductor.color || '-'}</span>
+                  )}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <strong style={{ minWidth: 90, textAlign: 'right' }}>Token:</strong>
+                  {editIndex === idx ? (
+                    <input 
+                      name="token" 
+                      value={editData.token || ''} 
+                      onChange={handleChange} 
+                      placeholder="Token FCM para notificaciones"
+                      style={{ flex: 1, padding: 7, borderRadius: 4, border: '1px solid #ccc' }} 
+                    />
+                  ) : (
+                    <span style={{ flex: 1, fontSize: '12px', color: '#6b7280' }}>
+                      {conductor.token ? (
+                        <span style={{ color: '#10b981', fontWeight: 'bold' }}>
+                          ✅ ${conductor.token.substring(0, 20)}...
+                        </span>
+                      ) : (
+                        <span style={{ color: '#ef4444', fontWeight: 'bold' }}>
+                          ⚠️ No configurado
+                        </span>
+                      )}
+                    </span>
                   )}
                 </div>
               </div>
