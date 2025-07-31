@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Wrapper, Status } from "@googlemaps/react-wrapper";
-import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot, setDoc } from "firebase/firestore";
-import { db } from "../firebaseConfig";
+import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot, setDoc, orderBy, limit } from "firebase/firestore";
+import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { db, storage } from "../firebaseConfig";
 // import axios from 'axios'; // Comentado porque no se usa
 
 /**
@@ -447,7 +448,11 @@ function TaxiForm() {
   const [direccion, setDireccion] = useState('');
   const [tiempo, setTiempo] = useState('');
   const [unidad, setUnidad] = useState('');
-  const [modoSeleccion, setModoSeleccion] = useState('aplicacion');
+  // Inicializar modoSeleccion desde localStorage o por defecto 'manual'
+  const [modoSeleccion, setModoSeleccion] = useState(() => {
+    const modoGuardado = localStorage.getItem('modoSeleccion');
+    return modoGuardado || 'manual'; // Por defecto 'manual' si no hay valor guardado
+  });
   const [usuarioEncontrado, setUsuarioEncontrado] = useState(null);
   const [buscandoUsuario, setBuscandoUsuario] = useState(false);
   const [mostrarModal, setMostrarModal] = useState(false);
@@ -479,6 +484,19 @@ function TaxiForm() {
   // Estados para edición de direcciones
   const [editandoDireccion, setEditandoDireccion] = useState(null);
   const [textoEditado, setTextoEditado] = useState('');
+
+  // Estados para modal de acciones del pedido
+  const [modalAccionesPedido, setModalAccionesPedido] = useState({
+    open: false,
+    pedido: null,
+    coleccion: '' // 'pedidosDisponibles' o 'pedidoEnCurso'
+  });
+
+  // Guardar modoSeleccion en localStorage cuando cambie
+  useEffect(() => {
+    localStorage.setItem('modoSeleccion', modoSeleccion);
+    console.log(`🔄 Modo cambiado a: ${modoSeleccion}`);
+  }, [modoSeleccion]);
 
   useEffect(() => {
     const handleKeyDown = (event) => {
@@ -526,25 +544,27 @@ function TaxiForm() {
     });
 
     // Listener para pedidoEnCurso
-    const qEnCurso = query(collection(db, 'pedidoEnCurso'));
-    const unsubscribeEnCurso = onSnapshot(qEnCurso, (querySnapshot) => {
+    const qEnCurso = query(
+      collection(db, 'pedidoEnCurso'),
+      orderBy('fecha', 'desc')
+    );
+    const unsubscribeEnCurso = onSnapshot(qEnCurso, async (querySnapshot) => {
       const pedidos = querySnapshot.docs.map(doc => ({
         id: doc.id,
         ...doc.data()
       }));
       
-      // Ordenar por fecha de creación más reciente primero
-      pedidos.sort((a, b) => {
-        if (a.fecha && b.fecha) {
-          const fechaA = new Date(a.fecha);
-          const fechaB = new Date(b.fecha);
-          return fechaB - fechaA;
-        }
-        return 0;
-      });
-      
       setPedidosEnCurso(pedidos);
       setCargandoPedidosCurso(false);
+      
+      // Verificar si hay pedidos de aplicación con estado "Iniciado"
+      const pedidosIniciados = pedidos.filter(pedido => 
+        pedido.tipopedido === 'Automático' && pedido.pedido === 'Iniciado'
+      );
+      
+      if (pedidosIniciados.length > 0) {
+        console.log(`🚀 ${pedidosIniciados.length} pedidos de aplicación iniciados`);
+      }
     }, (error) => {
       console.error('Error en listener de pedidoEnCurso:', error);
       setCargandoPedidosCurso(false);
@@ -586,31 +606,39 @@ function TaxiForm() {
     }
   };
 
-      // Cargar pedidos disponibles
-
-
-      // Cargar pedidos en curso
+  // Cargar pedidos en curso
   const cargarPedidosEnCurso = async () => {
     setCargandoPedidosCurso(true);
     try {
-      const q = query(collection(db, 'pedidoEnCurso'));
-      const querySnapshot = await getDocs(q);
-      const pedidos = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const q = query(
+        collection(db, 'pedidoEnCurso'),
+        orderBy('fecha', 'desc') // Ordenar por fecha más reciente
+      );
       
-      // Ordenar por fecha de creación más reciente primero
-      pedidos.sort((a, b) => {
-        if (a.fecha && b.fecha) {
-          const fechaA = new Date(a.fecha);
-          const fechaB = new Date(b.fecha);
-        return fechaB - fechaA;
+      // Usar onSnapshot para escuchar cambios en tiempo real
+      const unsubscribe = onSnapshot(q, (querySnapshot) => {
+        const pedidos = querySnapshot.docs.map(doc => ({
+          id: doc.id,
+          ...doc.data()
+        }));
+
+        setPedidosEnCurso(pedidos);
+        console.log(`📊 Pedidos en curso cargados: ${pedidos.length}`);
+        
+        // Verificar si hay pedidos de aplicación con estado "Iniciado"
+        const pedidosIniciados = pedidos.filter(pedido => 
+          pedido.tipopedido === 'Automático' && pedido.pedido === 'Iniciado'
+        );
+        
+        if (pedidosIniciados.length > 0) {
+          console.log(`🚀 ${pedidosIniciados.length} pedidos de aplicación iniciados`);
         }
-        return 0;
+      }, (error) => {
+        console.error('Error al escuchar pedidos en curso:', error);
       });
 
-      setPedidosEnCurso(pedidos);
+      // Guardar la función de limpieza para cuando el componente se desmonte
+      return unsubscribe;
     } catch (error) {
       console.error('Error al cargar pedidos en curso:', error);
     } finally {
@@ -618,6 +646,10 @@ function TaxiForm() {
     }
   };
 
+      // Cargar pedidos disponibles
+
+
+ 
 
 
   // Nueva función para buscar en clientes fijos cuando se presione Insertar
@@ -1524,7 +1556,7 @@ function TaxiForm() {
          latitudDestino: '',
          longitudDestino: '',
          sector: '', // Se puede editar después
-         tipoPedido: 'ok',
+         tipoPedido: 'Manual',
          valor: 'Central',
          central: true,
          coorporativo: false,
@@ -1532,7 +1564,7 @@ function TaxiForm() {
          pedido: 'Disponible',
          puerto: '3020',
          randon: clave,
-         rango: coordenadas ? '2' : '0', // Rango 0 si no hay coordenadas
+         rango: '0', // Rango siempre 0 para pedidos manuales
          viajes: '',
          foto: '0',
          tarifaSeleccionada: true
@@ -1557,11 +1589,8 @@ function TaxiForm() {
        // Limpiar el formulario
        limpiarFormulario();
        
-       setModal({ 
-         open: true, 
-         success: true, 
-         message: '¡Pedido registrado exitosamente!\nPuedes editarlo desde la tabla de pedidos disponibles.' 
-       });
+       // Registro silencioso - sin mostrar alert de éxito
+       console.log('✅ Pedido registrado silenciosamente en pedidosDisponibles');
      } catch (error) {
        console.error('Error al registrar el pedido:', error);
        setModal({ open: true, success: false, message: 'Error al registrar el pedido.' });
@@ -1680,7 +1709,7 @@ function TaxiForm() {
          latitudDestino: '',
          longitudDestino: '',
          sector: direccion || '',
-         tipoPedido: 'ok',
+         tipoPedido: 'Manual',
          valor: '',
          central: false,
          coorporativo: false,
@@ -1714,6 +1743,24 @@ function TaxiForm() {
        if (telefono && direccion) {
          await guardarEnHistorialCliente(telefono, direccion, coordenadas, 'manual');
        }
+
+       // Registrar automáticamente en la colección de pedidos manuales
+       try {
+         const pedidoManualData = {
+           ...pedidoEnCursoData,
+           idOriginal: docRef.id, // Referencia al documento original
+           fechaRegistro: new Date(),
+           tipo: 'manual',
+           estadoRegistro: 'Registrado',
+           modoRegistro: 'manual'
+         };
+
+         await addDoc(collection(db, 'pedidosManuales'), pedidoManualData);
+         console.log('✅ Pedido manual registrado en colección separada');
+       } catch (error) {
+         console.error('❌ Error al registrar pedido manual:', error);
+         // No fallar si no se puede registrar en la colección separada
+       }
        
        // Los listeners en tiempo real actualizarán automáticamente las tablas
        
@@ -1723,23 +1770,132 @@ function TaxiForm() {
        // Limpiar el formulario
        limpiarFormulario();
        
-       setModal({ 
-         open: true, 
-         success: true, 
-         message: `¡Pedido registrado directamente en "En Curso"!\nConductor: ${conductorData.nombre}\nUnidad: ${unidad}\nPlaca: ${conductorData.placa}\nTiempo: ${tiempo} min${tokenValido ? '\n✅ Token de notificaciones configurado' : '\n⚠️ Token de notificaciones no configurado'}\n📋 Duplicado creado en "NotificaciOnenCurso"`
-       });
+       // Registro silencioso - sin mostrar alert de éxito
+       console.log(`✅ Pedido registrado silenciosamente en "En Curso" - Conductor: ${conductorData.nombre}, Unidad: ${unidad}`);
     } catch (error) {
       console.error('Error al registrar el viaje:', error);
       setModal({ open: true, success: false, message: 'Error al registrar el pedido en curso.' });
          }
    };
 
-   // Función para iniciar edición de un viaje
-   const iniciarEdicionViaje = (viaje) => {
-     setEditandoViaje(viaje.id);
-     setTiempoEdit(viaje.tiempo || '');
-     setUnidadEdit(viaje.numeroUnidad || '');
-   };
+     // Función para abrir modal de acciones del pedido
+  const abrirModalAccionesPedido = (pedido, coleccion) => {
+    setModalAccionesPedido({
+      open: true,
+      pedido: pedido,
+      coleccion: coleccion
+    });
+  };
+
+  // Función para cerrar modal de acciones del pedido
+  const cerrarModalAccionesPedido = () => {
+    setModalAccionesPedido({
+      open: false,
+      pedido: null,
+      coleccion: ''
+    });
+  };
+
+  // Función para cancelar pedido por cliente
+  const cancelarPedidoPorCliente = async () => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+      
+      // Actualizar el pedido original
+      await updateDoc(pedidoRef, {
+        estado: 'Cancelado por Cliente',
+        fechaCancelacion: new Date(),
+        motivoCancelacion: 'Cancelado por el cliente'
+      });
+
+      // Guardar en todosLosViajes con la estructura de fecha
+      const fechaActual = new Date();
+      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const viajeCanceladoData = {
+        ...modalAccionesPedido.pedido,
+        estado: 'Cancelado por Cliente',
+        fechaCancelacion: fechaActual,
+        motivoCancelacion: 'Cancelado por el cliente',
+        fechaRegistroCancelacion: fechaActual
+      };
+
+      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
+      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+
+      // Eliminar el documento original de la colección
+      await deleteDoc(pedidoRef);
+
+      console.log('✅ Pedido cancelado por cliente, guardado en todosLosViajes y eliminado de la colección original');
+      cerrarModalAccionesPedido();
+    } catch (error) {
+      console.error('❌ Error al cancelar pedido:', error);
+      setModal({ open: true, success: false, message: 'Error al cancelar el pedido.' });
+    }
+  };
+
+  // Función para cambiar estado del pedido
+  const cambiarEstadoPedido = async (nuevoEstado) => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+      
+      // Actualizar el pedido original
+      await updateDoc(pedidoRef, {
+        estado: nuevoEstado,
+        fechaActualizacion: new Date()
+      });
+
+      // Si el estado es de cancelación, guardar también en todosLosViajes
+      if (nuevoEstado === 'Cancelado' || nuevoEstado === 'Rechazado') {
+        const fechaActual = new Date();
+        const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+          day: '2-digit',
+          month: '2-digit',
+          year: 'numeric'
+        }).replace(/\//g, '-');
+
+        const viajeCanceladoData = {
+          ...modalAccionesPedido.pedido,
+          estado: nuevoEstado,
+          fechaCancelacion: fechaActual,
+          motivoCancelacion: nuevoEstado === 'Cancelado' ? 'Pedido cancelado' : 'Pedido rechazado',
+          fechaRegistroCancelacion: fechaActual
+        };
+
+        // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+        const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
+        await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+
+        // Eliminar el documento original de la colección
+        await deleteDoc(pedidoRef);
+
+        console.log(`✅ Pedido ${nuevoEstado.toLowerCase()}, guardado en todosLosViajes y eliminado de la colección original`);
+      } else {
+        console.log(`✅ Estado del pedido cambiado a: ${nuevoEstado}`);
+      }
+
+      cerrarModalAccionesPedido();
+    } catch (error) {
+      console.error('❌ Error al cambiar estado del pedido:', error);
+      setModal({ open: true, success: false, message: 'Error al cambiar el estado del pedido.' });
+    }
+  };
+
+  // Función para iniciar edición de un viaje
+  const iniciarEdicionViaje = (viaje) => {
+    setEditandoViaje(viaje.id);
+    setTiempoEdit(viaje.tiempo || '');
+    setUnidadEdit(viaje.numeroUnidad || '');
+  };
 
    // Función para cancelar edición
    const cancelarEdicionViaje = () => {
@@ -1849,14 +2005,30 @@ function TaxiForm() {
          );
        }
 
+       // Registrar automáticamente en la colección de pedidos manuales
+       try {
+         const pedidoManualData = {
+           ...pedidoEnCursoData,
+           idOriginal: viajeId, // Referencia al documento original
+           fechaRegistro: new Date(),
+           tipo: 'manual',
+           estadoRegistro: 'Registrado',
+           modoRegistro: 'manual',
+           origen: 'pedidosDisponibles' // Indicar de dónde viene
+         };
+
+         await addDoc(collection(db, 'pedidosManuales'), pedidoManualData);
+         console.log('✅ Pedido manual registrado en colección separada (desde disponibles)');
+       } catch (error) {
+         console.error('❌ Error al registrar pedido manual:', error);
+         // No fallar si no se puede registrar en la colección separada
+       }
+
        // Cancelar edición - los listeners en tiempo real actualizarán automáticamente las tablas
        cancelarEdicionViaje();
        
-       setModal({ 
-         open: true, 
-         success: true, 
-         message: `¡Pedido movido a "En Curso" exitosamente!\nConductor: ${conductorData.nombre}\nUnidad: ${unidadEdit}\nPlaca: ${conductorData.placa}${tokenValido ? '\n✅ Token de notificaciones configurado' : '\n⚠️ Token de notificaciones no configurado'}\n📋 Duplicado creado en "NotificaciOnenCurso"` 
-       });
+       // Registro silencioso - sin mostrar alert de éxito
+       console.log(`✅ Pedido movido silenciosamente a "En Curso" - Conductor: ${conductorData.nombre}, Unidad: ${unidadEdit}`);
      } catch (error) {
        console.error('Error al mover el pedido:', error);
        setModal({ open: true, success: false, message: 'Error al mover el pedido a "En Curso".' });
@@ -1929,20 +2101,20 @@ function TaxiForm() {
         
         // Datos adicionales
         sector: direccion || '',
-        tipoPedido: 'ok',
+        tipoPedido: modoSeleccion === 'manual' ? 'Manual' : 'Automático',
         valor: '',
         central: false,
         coorporativo: false,
         llegue: false,
         puerto: '3020',
         randon: clave,
-        rango: coordenadas ? '1' : '0', // Rango 0 si no hay coordenadas
+        rango: modoSeleccion === 'manual' ? '0' : (coordenadas ? '1' : '0'), // Rango 0 si es manual, 1 si hay coordenadas en aplicación
         viajes: unidad || '',
         foto: '0',
         tarifaSeleccionada: true,
         
         // Identificación del modo
-        modoSeleccion: 'aplicacion'
+        modoSeleccion: modoSeleccion
       };
 
       // Inserción directa en la colección "pedidosDisponibles"
@@ -2197,16 +2369,23 @@ function TaxiForm() {
      return (
      <div style={{
        background: '#f3f4f6',
-       padding: 20,
+       padding: '20px',
        borderRadius: 8,
        border: '1px solid #d1d5db',
-       width: '50%',
-       minWidth: 800,
+       width: '100%',
+       maxWidth: '100%',
+       minWidth: 'auto',
        fontFamily: 'Arial, sans-serif',
-       boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+       boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+       boxSizing: 'border-box'
      }}>
       <form onSubmit={handleSubmit}>
-        <div style={{ display: 'flex', gap: 15, marginBottom: 15 }}>
+        <div style={{ 
+          display: 'flex', 
+          gap: '15px', 
+          marginBottom: '15px',
+          flexWrap: 'wrap'
+        }}>
           <input
             type="text"
             placeholder="Ingrese Teléfono"
@@ -2221,9 +2400,10 @@ function TaxiForm() {
                 telefono.length >= 7 && !usuarioEncontrado ? '#ef4444' : '#666'
               }`,
               borderRadius: 4,
-              fontSize: 18,
+              fontSize: '18px',
               fontWeight: 'bold',
-              width: 180,
+              minWidth: '180px',
+              flex: '1 1 200px',
               backgroundColor: buscandoUsuario ? '#fef3c7' : 
                             usuarioEncontrado ? '#d1fae5' :
                             telefono.length >= 7 && !usuarioEncontrado ? '#fee2e2' : 'white'
@@ -2236,9 +2416,10 @@ function TaxiForm() {
               padding: '12px 16px',
               border: '2px solid #666',
               borderRadius: 4,
-              fontSize: 18,
+              fontSize: '18px',
               fontWeight: 'bold',
-              minWidth: 180
+              minWidth: '180px',
+              flex: '1 1 200px'
             }}
           >
             <option value="">Selecciona</option>
@@ -2247,7 +2428,12 @@ function TaxiForm() {
           </select>
         </div>
 
-        <div style={{ display: 'flex', gap: 15, marginBottom: 15 }}>
+        <div style={{ 
+          display: 'flex', 
+          gap: '15px', 
+          marginBottom: '15px',
+          flexWrap: 'wrap'
+        }}>
           <input
             type="text"
             placeholder="Ingrese nombre"
@@ -2257,9 +2443,10 @@ function TaxiForm() {
               padding: '12px 16px',
               border: '2px solid #666',
               borderRadius: 4,
-              fontSize: 18,
+              fontSize: '18px',
               fontWeight: 'bold',
-              flex: 1
+              flex: '1 1 250px',
+              minWidth: '200px'
             }}
           />
           {modoSeleccion === 'aplicacion' && (
@@ -2272,15 +2459,21 @@ function TaxiForm() {
                 padding: '12px 16px',
                 border: '2px solid #666',
                 borderRadius: 4,
-                fontSize: 18,
+                fontSize: '18px',
                 fontWeight: 'bold',
-                flex: 1
+                flex: '1 1 250px',
+                minWidth: '200px'
               }}
             />
           )}
         </div>
 
-        <div style={{ display: 'flex', gap: 15, marginBottom: 15 }}>
+        <div style={{ 
+          display: 'flex', 
+          gap: '15px', 
+          marginBottom: '15px',
+          flexWrap: 'wrap'
+        }}>
           <input
             type="text"
             placeholder="Ingrese dirección"
@@ -2296,9 +2489,10 @@ function TaxiForm() {
               padding: '12px 16px',
               border: '2px solid #666',
               borderRadius: 4,
-              fontSize: 18,
+              fontSize: '18px',
               fontWeight: 'bold',
-              flex: modoSeleccion === 'aplicacion' ? '0 0 80%' : 1
+              flex: '1 1 300px',
+              minWidth: '250px'
             }}
           />
           
@@ -2313,11 +2507,12 @@ function TaxiForm() {
                 color: 'white',
                 border: 'none',
                 borderRadius: 4,
-                fontSize: 18,
+                fontSize: '18px',
                 fontWeight: 'bold',
                 cursor: !coordenadas.trim() ? 'not-allowed' : 'pointer',
                 transition: 'background 0.2s ease',
-                flex: '0 0 20%',
+                flex: '0 0 auto',
+                minWidth: '150px',
                 opacity: !coordenadas.trim() ? 0.6 : 1
               }}
               onMouseEnter={(e) => {
@@ -2348,7 +2543,7 @@ function TaxiForm() {
                    padding: '12px 16px',
                    border: '2px solid #666',
                    borderRadius: 4,
-                   fontSize: 18,
+                   fontSize: '18px',
                    fontWeight: 'bold',
                    width: 100
                  }}
@@ -2393,7 +2588,8 @@ function TaxiForm() {
                    cursor: (!tiempo.trim() || !unidad.trim()) ? 'not-allowed' : 'pointer',
                    transition: 'background 0.2s ease',
                    minWidth: 120,
-                   opacity: (!tiempo.trim() || !unidad.trim()) ? 0.6 : 1
+                   opacity: (!tiempo.trim() || !unidad.trim()) ? 0.6 : 1,
+                   display: 'none'
                  }}
                  onMouseEnter={(e) => {
                    if (tiempo.trim() && unidad.trim()) {
@@ -2422,7 +2618,8 @@ function TaxiForm() {
                    fontWeight: 'bold',
                    cursor: 'pointer',
                    transition: 'background 0.2s ease',
-                   minWidth: 120
+                   minWidth: 120,
+                   display: 'none'
                  }}
                  onMouseEnter={(e) => {
                    e.target.style.background = '#d97706';
@@ -2900,11 +3097,15 @@ function TaxiForm() {
             </div>
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ 
+            overflowX: 'auto',
+            maxWidth: '100%'
+          }}>
             <table style={{
               width: '100%',
               borderCollapse: 'collapse',
-              fontSize: 14
+              fontSize: '14px',
+              minWidth: '600px'
             }}>
                              <thead>
                  <tr style={{ background: '#f8fafc' }}>
@@ -3126,15 +3327,25 @@ function TaxiForm() {
                         textAlign: 'center'
                       }}>
                         <button
+                          onClick={() => abrirModalAccionesPedido(viaje, 'pedidosDisponibles')}
                           style={{
                             padding: '4px 12px',
                             borderRadius: 20,
                             border: 'none',
                             fontSize: 12,
                             fontWeight: 'bold',
-                            cursor: 'default',
+                            cursor: 'pointer',
                             background: (viaje.tiempo && viaje.numeroUnidad) ? '#10b981' : '#f59e0b',
-                            color: 'white'
+                            color: 'white',
+                            transition: 'all 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => {
+                            e.target.style.transform = 'scale(1.05)';
+                            e.target.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
+                          }}
+                          onMouseLeave={(e) => {
+                            e.target.style.transform = 'scale(1)';
+                            e.target.style.boxShadow = 'none';
                           }}
                         >
                           {(viaje.tiempo && viaje.numeroUnidad) ? 'Asignado' : 'Pendiente'}
@@ -3227,11 +3438,15 @@ function TaxiForm() {
             </div>
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div style={{ 
+            overflowX: 'auto',
+            maxWidth: '100%'
+          }}>
             <table style={{
               width: '100%',
               borderCollapse: 'collapse',
-              fontSize: 14
+              fontSize: '14px',
+              minWidth: '600px'
             }}>
               <thead>
                 <tr style={{ background: '#f8fafc' }}>
@@ -3308,21 +3523,30 @@ function TaxiForm() {
                 </tr>
               </thead>
               <tbody>
-                {pedidosEnCurso.map((pedido, index) => (
-                  <tr
-                    key={pedido.id}
-                    style={{
-                      borderBottom: '1px solid #f1f5f9',
-                      background: index % 2 === 0 ? '#fff' : '#fafbff',
-                      transition: 'background 0.2s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = '#fef2f2';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = index % 2 === 0 ? '#fff' : '#fafbff';
-                    }}
-                  >
+                {pedidosEnCurso.map((pedido, index) => {
+                  // Determinar si el pedido está iniciado (solo para pedidos de aplicación)
+                  const esPedidoIniciado = pedido.tipopedido === 'Automático' && pedido.pedido === 'Iniciado';
+                  
+                  return (
+                    <tr
+                      key={pedido.id}
+                      style={{
+                        borderBottom: '1px solid #f1f5f9',
+                        background: esPedidoIniciado 
+                          ? '#fef3c7' // Color amarillo claro para pedidos iniciados
+                          : (index % 2 === 0 ? '#fff' : '#fafbff'),
+                        transition: 'background 0.2s ease',
+                        borderLeft: esPedidoIniciado ? '4px solid #f59e0b' : 'none' // Borde naranja para destacar
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = esPedidoIniciado ? '#fde68a' : '#fef2f2';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = esPedidoIniciado 
+                          ? '#fef3c7' 
+                          : (index % 2 === 0 ? '#fff' : '#fafbff');
+                      }}
+                    >
                     <td style={{
                       padding: '12px 16px',
                       textAlign: 'center',
@@ -3394,22 +3618,33 @@ function TaxiForm() {
                       textAlign: 'center'
                     }}>
                       <button
+                        onClick={() => abrirModalAccionesPedido(pedido, 'pedidoEnCurso')}
                         style={{
                           padding: '4px 12px',
                           borderRadius: 20,
                           border: 'none',
                           fontSize: 12,
                           fontWeight: 'bold',
-                          cursor: 'default',
-                          background: pedido.modoSeleccion === 'aplicacion' ? '#3b82f6' : '#059669',
-                          color: 'white'
+                          cursor: 'pointer',
+                          background: pedido.tipopedido === 'Automático' ? '#3b82f6' : '#059669',
+                          color: 'white',
+                          transition: 'all 0.2s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.target.style.transform = 'scale(1.05)';
+                          e.target.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.target.style.transform = 'scale(1)';
+                          e.target.style.boxShadow = 'none';
                         }}
                       >
-                        {pedido.modoSeleccion === 'aplicacion' ? 'Aplicación' : 'Manual'}
+                        {pedido.tipopedido === 'Automático' ? 'Aplicación' : 'Manual'}
                       </button>
                     </td>
                   </tr>
-                ))}
+                );
+              })}
               </tbody>
             </table>
           </div>
@@ -3861,6 +4096,203 @@ function TaxiForm() {
         </div>
       )}
 
+      {/* Modal de acciones del pedido */}
+      {modalAccionesPedido.open && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '30px',
+            borderRadius: '12px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            width: '500px',
+            maxWidth: '90vw',
+            textAlign: 'center'
+          }}>
+            <h3 style={{
+              margin: '0 0 20px 0',
+              color: '#1f2937',
+              fontSize: '20px',
+              fontWeight: 'bold'
+            }}>
+              🎛️ Acciones del Pedido
+            </h3>
+            
+            <div style={{
+              marginBottom: '20px',
+              padding: '15px',
+              background: '#f8fafc',
+              borderRadius: '8px',
+              textAlign: 'left'
+            }}>
+              <p style={{ margin: '0 0 10px 0', fontWeight: 'bold', color: '#374151' }}>
+                📞 Cliente: {modalAccionesPedido.pedido?.nombreCliente || modalAccionesPedido.pedido?.codigo || 'N/A'}
+              </p>
+              <p style={{ margin: '0 0 10px 0', color: '#6b7280' }}>
+                📍 Dirección: {modalAccionesPedido.pedido?.direccion || 'N/A'}
+              </p>
+              <p style={{ margin: '0', color: '#6b7280' }}>
+                🏷️ Tipo: {modalAccionesPedido.pedido?.tipopedido === 'Automático' ? 'Aplicación' : 'Manual'}
+              </p>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '10px'
+            }}>
+              <button
+                onClick={cancelarPedidoPorCliente}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#dc2626',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#b91c1c';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#dc2626';
+                }}
+              >
+                ❌ Cancelar por Cliente
+              </button>
+
+              <button
+                onClick={() => cambiarEstadoPedido('Cancelado')}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#dc2626';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#ef4444';
+                }}
+              >
+                🚫 Cancelar Pedido
+              </button>
+
+              <button
+                onClick={() => cambiarEstadoPedido('Rechazado')}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#7c3aed',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#6d28d9';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#7c3aed';
+                }}
+              >
+                ❌ Rechazar Pedido
+              </button>
+
+              <button
+                onClick={() => cambiarEstadoPedido('En Espera')}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#f59e0b',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#d97706';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#f59e0b';
+                }}
+              >
+                ⏳ Poner en Espera
+              </button>
+
+              <button
+                onClick={() => cambiarEstadoPedido('Completado')}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#059669',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#047857';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#059669';
+                }}
+              >
+                ✅ Marcar como Completado
+              </button>
+
+              <button
+                onClick={cerrarModalAccionesPedido}
+                style={{
+                  padding: '12px 20px',
+                  border: '2px solid #6b7280',
+                  borderRadius: '8px',
+                  backgroundColor: 'transparent',
+                  color: '#6b7280',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#f3f4f6';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent';
+                }}
+              >
+                ✖️ Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
 
     </div>
   );
@@ -3880,31 +4312,48 @@ function ConductoresContent() {
   const [loading, setLoading] = useState(true);
   const [editIndex, setEditIndex] = useState(null);
   const [editData, setEditData] = useState({});
+  const [viewMode, setViewMode] = useState('cards'); // 'cards' o 'table'
+  const [searchTerm, setSearchTerm] = useState('');
+  const [searchBy, setSearchBy] = useState('nombre'); // 'nombre' o 'unidad'
   const fileInputRef = useRef(null);
 
+  const fetchConductores = async () => {
+    setLoading(true);
+    try {
+      const q = query(collection(db, 'conductores'));
+      const querySnapshot = await getDocs(q);
+      const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      
+      // Limpiar URLs inválidas de los conductores
+      const conductoresLimpios = limpiarURLsInvalidas(data);
+      setConductores(conductoresLimpios);
+      
+      console.log('✅ Conductores cargados y URLs validadas');
+    } catch (error) {
+      console.error('Error al cargar conductores:', error);
+      alert('Error al cargar conductores');
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const fetchConductores = async () => {
-      setLoading(true);
-      try {
-        const q = query(collection(db, 'conductores'));
-        const querySnapshot = await getDocs(q);
-        const data = querySnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-        setConductores(data);
-      } catch (error) {
-        alert('Error al cargar conductores');
-      } finally {
-        setLoading(false);
-      }
-    };
     fetchConductores();
   }, []);
 
   const handleEdit = (index) => {
-    setEditIndex(index);
-    setEditData({ ...conductores[index] });
+    const conductor = conductoresFiltrados[index];
+    setEditIndex(conductor.id); // Usar el ID en lugar del índice
+    setEditData({ ...conductor });
   };
 
   const handleCancel = () => {
+    // Limpiar URL temporal si existe
+    if (editData.foto && editData.foto.startsWith('blob:')) {
+      URL.revokeObjectURL(editData.foto);
+      console.log('🧹 URL temporal limpiada');
+    }
+    
     setEditIndex(null);
     setEditData({});
   };
@@ -3917,12 +4366,53 @@ function ConductoresContent() {
   const handleSave = async () => {
     try {
       const conductorRef = doc(db, 'conductores', editData.id);
-      await updateDoc(conductorRef, editData);
-      setConductores(prev => prev.map((c, i) => i === editIndex ? { ...editData } : c));
+      
+      // Si hay una nueva foto, eliminar la foto anterior si existe
+      if (editData.foto && editData.foto !== conductores.find(c => c.id === editData.id)?.foto) {
+        const conductorOriginal = conductores.find(c => c.id === editData.id);
+        if (conductorOriginal?.foto && conductorOriginal.foto.startsWith('https://firebasestorage.googleapis.com')) {
+          try {
+            // Extraer la ruta del archivo de la URL
+            const urlParts = conductorOriginal.foto.split('/');
+            const filePath = urlParts.slice(urlParts.indexOf('o') + 1, urlParts.indexOf('?')).join('/');
+            const decodedPath = decodeURIComponent(filePath);
+            const oldPhotoRef = ref(storage, decodedPath);
+            await deleteObject(oldPhotoRef);
+            console.log('✅ Foto anterior eliminada');
+          } catch (deleteError) {
+            console.warn('⚠️ No se pudo eliminar la foto anterior:', deleteError);
+            // No bloquear la operación si falla la eliminación de la foto
+          }
+        }
+      }
+      
+      // Preparar datos para guardar en Firestore
+      const datosParaGuardar = { ...editData };
+      
+      // Validar y limpiar la foto antes de guardar
+      if (datosParaGuardar.foto) {
+        if (datosParaGuardar.foto.startsWith('blob:')) {
+          console.log('⚠️ No guardando URL temporal (blob) en Firestore');
+          delete datosParaGuardar.foto;
+          alert('⚠️ La foto no se pudo subir a Firebase Storage. Se guardará sin foto.');
+        } else if (datosParaGuardar.foto.startsWith('https://firebasestorage.googleapis.com')) {
+          console.log('✅ Guardando URL de Firebase Storage en Firestore');
+        } else {
+          console.log('⚠️ URL de foto no válida, eliminando del documento');
+          delete datosParaGuardar.foto;
+        }
+      }
+      
+      await updateDoc(conductorRef, datosParaGuardar);
+      
+      // Actualizar tanto el array original como el filtrado
+      setConductores(prev => prev.map((c, i) => c.id === editData.id ? { ...editData } : c));
+      
       setEditIndex(null);
       setEditData({});
-      alert('Conductor actualizado');
+      alert('Conductor actualizado exitosamente');
     } catch (error) {
+      console.error('❌ Error al actualizar conductor:', error);
       alert('Error al actualizar conductor');
     }
   };
@@ -3930,8 +4420,105 @@ function ConductoresContent() {
   const handleFotoChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setEditData(prev => ({ ...prev, foto: URL.createObjectURL(file) }));
-    // En producción, reemplaza la línea anterior por la subida real y la URL de Firebase Storage
+
+    console.log('📁 Archivo seleccionado:', file.name, 'Tamaño:', file.size, 'Tipo:', file.type);
+
+    // Validar tipo de archivo
+    if (!file.type.startsWith('image/')) {
+      alert('Por favor selecciona solo archivos de imagen');
+      return;
+    }
+
+    // Validar tamaño (máximo 5MB)
+    if (file.size > 5 * 1024 * 1024) {
+      alert('La imagen debe ser menor a 5MB');
+      return;
+    }
+
+    // Crear URL temporal inmediatamente para preview
+    const tempURL = URL.createObjectURL(file);
+    setEditData(prev => ({ ...prev, foto: tempURL }));
+    console.log('🖼️ Preview creado con URL temporal');
+
+    try {
+      // Verificar configuración de Firebase
+      console.log('🔧 Verificando configuración de Firebase...');
+      console.log('• Storage Bucket:', storage.app.options.storageBucket);
+      console.log('• Project ID:', storage.app.options.projectId);
+
+      // Verificar autenticación antes de subir
+      const { auth } = await import('../firebaseConfig');
+      const user = auth.currentUser;
+      
+      if (!user) {
+        console.warn('⚠️ Usuario no autenticado, usando fallback local');
+        alert('⚠️ Debes estar autenticado para subir fotos. La foto se guardará localmente.');
+        return;
+      }
+
+      console.log('👤 Usuario autenticado:', user.email);
+
+      // Crear referencia única para la imagen usando el ID del conductor
+      const timestamp = Date.now();
+      const fileExtension = file.name.split('.').pop() || 'jpg';
+      const fileName = `conductores/${editData.id || 'temp'}_${timestamp}.${fileExtension}`;
+      const storageRef = ref(storage, fileName);
+
+      console.log('📤 Iniciando subida a Firebase Storage:', fileName);
+      console.log('📍 Ruta completa:', `gs://${storage.app.options.storageBucket}/${fileName}`);
+
+      // Subir archivo a Firebase Storage
+      console.log('⏳ Subiendo archivo...');
+      const snapshot = await uploadBytes(storageRef, file);
+      
+      console.log('✅ Archivo subido exitosamente');
+      console.log('📊 Bytes transferidos:', snapshot.bytesTransferred);
+      
+      // Obtener URL de descarga
+      console.log('🔗 Obteniendo URL de descarga...');
+      const downloadURL = await getDownloadURL(snapshot.ref);
+      
+      console.log('✅ URL de descarga obtenida:', downloadURL);
+      
+      // Actualizar estado con la URL de Firebase Storage
+      setEditData(prev => ({ ...prev, foto: downloadURL }));
+      
+      // Limpiar URL temporal
+      URL.revokeObjectURL(tempURL);
+      
+      console.log('✅ Foto subida exitosamente a Firebase Storage');
+      
+      // Mostrar mensaje de éxito
+      alert('✅ Foto subida exitosamente a Firebase Storage');
+      
+    } catch (error) {
+      console.error('❌ Error al subir foto:', error);
+      console.error('❌ Código de error:', error.code);
+      console.error('❌ Mensaje de error:', error.message);
+      
+      // Mantener la URL temporal como fallback
+      console.log('⚠️ Manteniendo URL temporal como fallback debido a error de subida');
+      
+      // Mostrar mensaje específico según el tipo de error
+      let errorMessage = 'Error al subir la foto. Por favor intenta de nuevo.';
+      
+      if (error.code === 'storage/unauthorized') {
+        errorMessage = 'Error de permisos. Verifica las reglas de Firebase Storage.';
+      } else if (error.code === 'storage/cors') {
+        errorMessage = 'Error de CORS. Verifica la configuración de dominios autorizados.';
+      } else if (error.code === 'storage/network-request-failed') {
+        errorMessage = 'Error de conexión. Verifica tu conexión a internet.';
+      } else if (error.code === 'storage/bucket-not-found') {
+        errorMessage = 'Bucket de Storage no encontrado. Verifica la configuración.';
+      } else if (error.code === 'storage/object-not-found') {
+        errorMessage = 'Objeto no encontrado en Storage.';
+      } else if (error.code === 'storage/quota-exceeded') {
+        errorMessage = 'Cuota de Storage excedida.';
+      }
+      
+      console.warn('⚠️', errorMessage);
+      alert(`⚠️ ${errorMessage}\n\nCódigo: ${error.code}\n\nLa foto se guardará localmente por ahora.`);
+    }
   };
 
   // Cambia el estatus y lo guarda en Firestore inmediatamente
@@ -3940,20 +4527,444 @@ function ConductoresContent() {
     try {
       const conductorRef = doc(db, 'conductores', conductor.id);
       await updateDoc(conductorRef, { estatus: nuevoEstatus });
-      setConductores(prev => prev.map((c, i) => i === idx ? { ...c, estatus: nuevoEstatus } : c));
+      
+      // Actualizar por ID en lugar de por índice
+      setConductores(prev => prev.map((c, i) => c.id === conductor.id ? { ...c, estatus: nuevoEstatus } : c));
     } catch (error) {
       alert('Error al actualizar estatus');
+    }
+  };
+
+  const handleEliminarConductor = async (conductor) => {
+    if (!window.confirm(`¿Estás seguro de que quieres eliminar al conductor ${conductor.nombre}?\n\nEsta acción eliminará:\n• El conductor de la base de datos\n• Su foto de Firebase Storage (si existe)`)) {
+      return;
+    }
+
+    try {
+      console.log('🗑️ Iniciando eliminación del conductor:', conductor.nombre);
+      
+      // Eliminar foto de Firebase Storage si existe
+      if (conductor.foto && conductor.foto.startsWith('https://firebasestorage.googleapis.com')) {
+        try {
+          console.log('📸 Eliminando foto de Firebase Storage...');
+          
+          // Extraer la ruta del archivo de la URL de Firebase Storage
+          const urlParts = conductor.foto.split('/');
+          const filePath = urlParts.slice(urlParts.indexOf('o') + 1, urlParts.indexOf('?')).join('/');
+          const decodedPath = decodeURIComponent(filePath);
+          
+          console.log('🗂️ Ruta del archivo a eliminar:', decodedPath);
+          
+          const photoRef = ref(storage, decodedPath);
+          await deleteObject(photoRef);
+          
+          console.log('✅ Foto eliminada exitosamente de Firebase Storage');
+        } catch (deleteError) {
+          console.warn('⚠️ No se pudo eliminar la foto de Storage:', deleteError);
+          // Continuar con la eliminación del conductor aunque falle la eliminación de la foto
+        }
+      } else {
+        console.log('ℹ️ No hay foto de Firebase Storage para eliminar');
+      }
+
+      // Eliminar documento de Firestore
+      console.log('📄 Eliminando documento de Firestore...');
+      const conductorRef = doc(db, 'conductores', conductor.id);
+      await deleteDoc(conductorRef);
+      
+      console.log('✅ Documento eliminado exitosamente de Firestore');
+      
+      // Actualizar estado local
+      setConductores(prev => prev.filter(c => c.id !== conductor.id));
+      
+      console.log('✅ Estado local actualizado');
+      
+      alert('✅ Conductor eliminado exitosamente');
+    } catch (error) {
+      console.error('❌ Error al eliminar conductor:', error);
+      
+      let errorMessage = 'Error al eliminar conductor';
+      
+      if (error.code === 'permission-denied') {
+        errorMessage = 'No tienes permisos para eliminar conductores';
+      } else if (error.code === 'not-found') {
+        errorMessage = 'El conductor no fue encontrado';
+      } else if (error.code === 'unavailable') {
+        errorMessage = 'Servicio no disponible. Intenta de nuevo';
+      }
+      
+      alert(`❌ ${errorMessage}`);
+    }
+  };
+
+  // Filtrar conductores basado en búsqueda
+  const conductoresFiltrados = conductores.filter(conductor => {
+    if (!searchTerm) return true;
+    
+    const termino = searchTerm.toLowerCase();
+    
+    if (searchBy === 'nombre') {
+      return conductor.nombre && conductor.nombre.toLowerCase().includes(termino);
+    } else if (searchBy === 'unidad') {
+      return conductor.unidad && conductor.unidad.toString().includes(termino);
+    }
+    
+    return true;
+  });
+
+  // Función para obtener el índice real en el array original
+  const getOriginalIndex = (filteredIndex) => {
+    const conductor = conductoresFiltrados[filteredIndex];
+    return conductores.findIndex(c => c.id === conductor.id);
+  };
+
+  // Función para verificar si una URL de imagen es válida
+  const isImageUrlValid = (url) => {
+    if (!url) return false;
+    if (url.startsWith('blob:')) return true; // URLs temporales son válidas para preview
+    if (url.startsWith('https://firebasestorage.googleapis.com')) return true; // URLs de Firebase Storage
+    if (url.startsWith('https://') && (url.includes('.jpg') || url.includes('.jpeg') || url.includes('.png') || url.includes('.gif'))) return true; // URLs de imágenes válidas
+    return false;
+  };
+
+  // Función para limpiar URLs inválidas de los conductores
+  const limpiarURLsInvalidas = (conductores) => {
+    return conductores.map(conductor => {
+      if (conductor.foto && !isImageUrlValid(conductor.foto)) {
+        console.log('🧹 Limpiando URL inválida del conductor:', conductor.nombre);
+        return { ...conductor, foto: null };
+      }
+      return conductor;
+    });
+  };
+
+  // Función para obtener información de Firebase Storage
+  const getStorageInfo = () => {
+    console.log('📊 Información de Firebase Storage:');
+    console.log('• Bucket:', storage.app.options.storageBucket);
+    console.log('• Proyecto:', storage.app.options.projectId);
+    console.log('• Configuración completa:', storage.app.options);
+  };
+
+  // Función para verificar conectividad con Firebase Storage
+  const testStorageConnection = async () => {
+    try {
+      console.log('🔍 Probando conexión con Firebase Storage...');
+      console.log('📍 Bucket:', storage.app.options.storageBucket);
+      console.log('📍 Project ID:', storage.app.options.projectId);
+      
+      const testRef = ref(storage, 'test-connection.txt');
+      const testBlob = new Blob(['test'], { type: 'text/plain' });
+      
+      console.log('📤 Subiendo archivo de prueba...');
+      const snapshot = await uploadBytes(testRef, testBlob);
+      console.log('✅ Archivo subido exitosamente');
+      
+      console.log('🗑️ Eliminando archivo de prueba...');
+      await deleteObject(testRef);
+      console.log('✅ Archivo eliminado exitosamente');
+      
+      console.log('✅ Conexión con Firebase Storage exitosa');
+      return true;
+    } catch (error) {
+      console.error('❌ Error de conexión con Firebase Storage:', error);
+      console.error('❌ Código de error:', error.code);
+      console.error('❌ Mensaje de error:', error.message);
+      
+      if (error.code === 'storage/unauthorized') {
+        console.error('❌ Error de permisos. Verifica las reglas de Storage.');
+      } else if (error.code === 'storage/bucket-not-found') {
+        console.error('❌ Bucket no encontrado. Verifica la configuración.');
+      } else if (error.code === 'storage/cors') {
+        console.error('❌ Error de CORS. Verifica dominios autorizados.');
+      }
+      
+      return false;
+    }
+  };
+
+  // Función para limpiar URLs inválidas en Firestore
+  const limpiarURLsInvalidasEnFirestore = async () => {
+    try {
+      console.log('🧹 Iniciando limpieza de URLs inválidas en Firestore...');
+      
+      const querySnapshot = await getDocs(collection(db, 'conductores'));
+      let actualizaciones = 0;
+      
+      for (const doc of querySnapshot.docs) {
+        const conductor = doc.data();
+        if (conductor.foto && !isImageUrlValid(conductor.foto)) {
+          console.log(`🧹 Limpiando URL inválida del conductor: ${conductor.nombre}`);
+          await updateDoc(doc.ref, { foto: null });
+          actualizaciones++;
+        }
+      }
+      
+      console.log(`✅ Limpieza completada. ${actualizaciones} conductores actualizados.`);
+      alert(`✅ Limpieza completada. ${actualizaciones} conductores actualizados.`);
+      
+      // Recargar conductores
+      fetchConductores();
+      
+    } catch (error) {
+      console.error('❌ Error durante la limpieza:', error);
+      alert('❌ Error durante la limpieza de URLs inválidas');
+    }
+  };
+
+  // Función para diagnosticar problemas de Firebase Storage
+  const diagnosticarStorage = async () => {
+    try {
+      console.log('🔍 Iniciando diagnóstico de Firebase Storage...');
+      
+      // 1. Verificar configuración
+      console.log('📊 Configuración de Firebase:');
+      console.log('• Project ID:', storage.app.options.projectId);
+      console.log('• Storage Bucket:', storage.app.options.storageBucket);
+      console.log('• Auth Domain:', storage.app.options.authDomain);
+      console.log('• API Key:', storage.app.options.apiKey ? '✅ Configurado' : '❌ No configurado');
+      
+      // 2. Verificar autenticación
+      const { auth } = await import('../firebaseConfig');
+      const user = auth.currentUser;
+      console.log('👤 Usuario autenticado:', user ? user.email : 'No autenticado');
+      
+      // 3. Verificar variables de entorno
+      console.log('🔧 Variables de entorno:');
+      console.log('• REACT_APP_FIREBASE_STORAGE_BUCKET:', process.env.REACT_APP_FIREBASE_STORAGE_BUCKET);
+      console.log('• REACT_APP_FIREBASE_PROJECT_ID:', process.env.REACT_APP_FIREBASE_PROJECT_ID);
+      
+      // 4. Probar conexión básica
+      console.log('🌐 Probando conexión con Storage...');
+      const testRef = ref(storage, 'test-diagnostico.txt');
+      const testBlob = new Blob(['test'], { type: 'text/plain' });
+      
+      console.log('📤 Subiendo archivo de prueba...');
+      const snapshot = await uploadBytes(testRef, testBlob);
+      console.log('✅ Archivo subido exitosamente');
+      
+      console.log('🔗 Obteniendo URL de descarga...');
+      const downloadURL = await getDownloadURL(snapshot.ref);
+      console.log('✅ URL obtenida:', downloadURL);
+      
+      console.log('🗑️ Eliminando archivo de prueba...');
+      await deleteObject(testRef);
+      console.log('✅ Archivo eliminado exitosamente');
+      
+      alert('✅ Diagnóstico completado. Firebase Storage funciona correctamente.');
+      
+    } catch (error) {
+      console.error('❌ Error en diagnóstico:', error);
+      console.error('❌ Código de error:', error.code);
+      console.error('❌ Mensaje de error:', error.message);
+      
+      let mensaje = 'Error desconocido en Firebase Storage.';
+      
+      if (error.code === 'storage/unauthorized') {
+        mensaje = 'Error de permisos. Verifica las reglas de Storage.';
+      } else if (error.code === 'storage/bucket-not-found') {
+        mensaje = 'Bucket de Storage no encontrado. Verifica la configuración.';
+      } else if (error.code === 'storage/network-request-failed') {
+        mensaje = 'Error de red. Verifica tu conexión a internet.';
+      } else if (error.code === 'storage/cors') {
+        mensaje = 'Error de CORS. Verifica la configuración de dominios autorizados.';
+      } else if (error.code === 'storage/object-not-found') {
+        mensaje = 'Objeto no encontrado en Storage.';
+      } else if (error.code === 'storage/quota-exceeded') {
+        mensaje = 'Cuota de Storage excedida.';
+      }
+      
+      alert(`❌ ${mensaje}\n\nCódigo de error: ${error.code}\n\nVerifica:\n1. Reglas de Storage\n2. Dominios autorizados\n3. Configuración del proyecto`);
     }
   };
 
   return (
     <div style={{ padding: 20 }}>
       <h2 style={{ marginBottom: 20 }}>Gestión de Conductores</h2>
+      
+      {/* Controles de vista y búsqueda */}
+      <div style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        marginBottom: 20,
+        flexWrap: 'wrap',
+        gap: 15
+      }}>
+        {/* Controles de vista */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 'bold', color: '#374151' }}>Vista:</span>
+          <button
+            onClick={() => setViewMode('cards')}
+            style={{
+              background: viewMode === 'cards' ? '#3b82f6' : '#e5e7eb',
+              color: viewMode === 'cards' ? 'white' : '#374151',
+              border: 'none',
+              borderRadius: 6,
+              padding: '8px 16px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              fontSize: 14
+            }}
+          >
+            🃏 Cuadros
+          </button>
+          <button
+            onClick={() => setViewMode('table')}
+            style={{
+              background: viewMode === 'table' ? '#3b82f6' : '#e5e7eb',
+              color: viewMode === 'table' ? 'white' : '#374151',
+              border: 'none',
+              borderRadius: 6,
+              padding: '8px 16px',
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              fontSize: 14
+            }}
+          >
+            📊 Tabla
+          </button>
+          <button
+            onClick={async () => {
+              getStorageInfo();
+              const isConnected = await testStorageConnection();
+              alert(isConnected ? '✅ Firebase Storage conectado correctamente' : '❌ Error de conexión con Firebase Storage');
+            }}
+            style={{
+              background: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: 6,
+              padding: '8px 12px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: 12
+            }}
+            title="Probar conexión con Firebase Storage"
+          >
+            🔧 Storage
+          </button>
+          <button
+            onClick={limpiarURLsInvalidasEnFirestore}
+            style={{
+              background: '#f59e0b',
+              color: 'white',
+              border: 'none',
+              borderRadius: 6,
+              padding: '8px 12px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: 12
+            }}
+            title="Limpiar URLs inválidas en Firestore"
+          >
+            🧹 Limpiar URLs
+          </button>
+          <button
+            onClick={diagnosticarStorage}
+            style={{
+              background: '#8b5cf6',
+              color: 'white',
+              border: 'none',
+              borderRadius: 6,
+              padding: '8px 12px',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: 12
+            }}
+            title="Diagnosticar problemas de Firebase Storage"
+          >
+            🔍 Diagnosticar
+          </button>
+        </div>
+
+        {/* Controles de búsqueda */}
+        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+          <span style={{ fontWeight: 'bold', color: '#374151' }}>Buscar por:</span>
+          <select
+            value={searchBy}
+            onChange={(e) => setSearchBy(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              border: '1px solid #d1d5db',
+              borderRadius: 6,
+              fontSize: 14,
+              background: 'white'
+            }}
+          >
+            <option value="nombre">Nombre</option>
+            <option value="unidad">Número de Unidad</option>
+          </select>
+          <input
+            type="text"
+            placeholder={`Buscar por ${searchBy === 'nombre' ? 'nombre' : 'unidad'}...`}
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            style={{
+              padding: '8px 12px',
+              border: '1px solid #d1d5db',
+              borderRadius: 6,
+              fontSize: 14,
+              minWidth: 200
+            }}
+          />
+          {searchTerm && (
+            <button
+              onClick={() => setSearchTerm('')}
+              style={{
+                background: '#ef4444',
+                color: 'white',
+                border: 'none',
+                borderRadius: 6,
+                padding: '8px 12px',
+                cursor: 'pointer',
+                fontSize: 14
+              }}
+            >
+              ✕ Limpiar
+            </button>
+          )}
+        </div>
+      </div>
+
+      {/* Información de resultados */}
+      <div style={{ 
+        marginBottom: 20, 
+        padding: '10px 15px', 
+        background: '#f3f4f6', 
+        borderRadius: 6,
+        fontSize: 14,
+        color: '#6b7280'
+      }}>
+        Mostrando {conductoresFiltrados.length} de {conductores.length} conductores
+        {searchTerm && ` (filtrado por "${searchTerm}")`}
+      </div>
+
       {loading ? (
-        <div>Cargando conductores...</div>
-      ) : (
+        <div style={{ textAlign: 'center', padding: '40px', color: '#6b7280' }}>
+          <div style={{ fontSize: '24px', marginBottom: '10px' }}>⏳</div>
+          Cargando conductores...
+        </div>
+      ) : conductoresFiltrados.length === 0 ? (
+        <div style={{ 
+          textAlign: 'center', 
+          padding: '60px 20px',
+          color: '#6b7280',
+          background: '#f9fafb',
+          borderRadius: 12,
+          border: '2px dashed #d1d5db'
+        }}>
+          <div style={{ fontSize: '48px', marginBottom: '15px' }}>🔍</div>
+          <div style={{ fontSize: '18px', fontWeight: 'bold', marginBottom: '8px' }}>
+            No se encontraron conductores
+          </div>
+          <div style={{ fontSize: '14px' }}>
+            {searchTerm ? 'Intenta con otros términos de búsqueda' : 'No hay conductores registrados'}
+          </div>
+        </div>
+      ) : viewMode === 'cards' ? (
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 32, justifyContent: 'flex-start' }}>
-          {conductores.map((conductor, idx) => (
+          {conductoresFiltrados.map((conductor, idx) => (
             <div key={conductor.id} style={{
               background: '#fff',
               borderRadius: 16,
@@ -3969,13 +4980,39 @@ function ConductoresContent() {
             }}>
               <div style={{ marginBottom: 24, width: '100%' }}>
                 <div style={{ width: '100%', height: 180, border: '2.5px solid #3b82f6', borderRadius: '12px 12px 0 0', boxShadow: '0 2px 8px #3b82f633', overflow: 'hidden', background: 'transparent', margin: '0 auto', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <img
-                    src={editIndex === idx ? (editData.foto || conductor.foto) : conductor.foto}
-                    alt={conductor.nombre}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
-                  />
+                  {(() => {
+                    const fotoUrl = editIndex === conductor.id ? (editData.foto || conductor.foto) : conductor.foto;
+                    return isImageUrlValid(fotoUrl) ? (
+                      <img
+                        src={fotoUrl}
+                        alt={conductor.nombre}
+                        style={{ width: '100%', height: '100%', objectFit: 'cover', display: 'block' }}
+                        onError={(e) => {
+                          console.warn('⚠️ Error al cargar imagen:', e.target.src);
+                          e.target.style.display = 'none';
+                          e.target.nextSibling.style.display = 'flex';
+                        }}
+                        onLoad={(e) => {
+                          console.log('✅ Imagen cargada exitosamente:', e.target.src);
+                        }}
+                      />
+                    ) : null;
+                  })()}
+                  <div style={{
+                    width: '100%',
+                    height: '100%',
+                    display: (editIndex === conductor.id ? (editData.foto || conductor.foto) : conductor.foto) ? 'none' : 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    background: '#f3f4f6',
+                    color: '#6b7280',
+                    fontSize: '14px',
+                    fontWeight: 'bold'
+                  }}>
+                    👤 {conductor.nombre ? conductor.nombre.charAt(0) : 'C'}
+                  </div>
                 </div>
-                {editIndex === idx && (
+                {editIndex === conductor.id && (
                   <>
                     <input
                       type="file"
@@ -3996,7 +5033,7 @@ function ConductoresContent() {
               <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 10 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <strong style={{ minWidth: 90, textAlign: 'right' }}>Nombre:</strong>
-                  {editIndex === idx ? (
+                  {editIndex === conductor.id ? (
                     <input name="nombre" value={editData.nombre} onChange={handleChange} style={{ flex: 1, padding: 7, borderRadius: 4, border: '1px solid #ccc' }} />
                   ) : (
                     <span style={{ flex: 1 }}>{conductor.nombre}</span>
@@ -4012,7 +5049,7 @@ function ConductoresContent() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <strong style={{ minWidth: 90, textAlign: 'right' }}>Teléfono:</strong>
-                  {editIndex === idx ? (
+                  {editIndex === conductor.id ? (
                     <input name="telefono" value={editData.telefono} onChange={handleChange} style={{ flex: 1, padding: 7, borderRadius: 4, border: '1px solid #ccc' }} />
                   ) : (
                     <span style={{ flex: 1 }}>{conductor.telefono}</span>
@@ -4020,7 +5057,7 @@ function ConductoresContent() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <strong style={{ minWidth: 90, textAlign: 'right' }}>Unidad:</strong>
-                  {editIndex === idx ? (
+                  {editIndex === conductor.id ? (
                     <input name="unidad" value={editData.unidad} onChange={handleChange} style={{ flex: 1, padding: 7, borderRadius: 4, border: '1px solid #ccc' }} />
                   ) : (
                     <span style={{ flex: 1 }}>{conductor.unidad}</span>
@@ -4028,7 +5065,7 @@ function ConductoresContent() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <strong style={{ minWidth: 90, textAlign: 'right' }}>Placa:</strong>
-                  {editIndex === idx ? (
+                  {editIndex === conductor.id ? (
                     <input name="placa" value={editData.placa || ''} onChange={handleChange} style={{ flex: 1, padding: 7, borderRadius: 4, border: '1px solid #ccc' }} />
                   ) : (
                     <span style={{ flex: 1 }}>{conductor.placa || '-'}</span>
@@ -4036,40 +5073,17 @@ function ConductoresContent() {
                 </div>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                   <strong style={{ minWidth: 90, textAlign: 'right' }}>Color:</strong>
-                  {editIndex === idx ? (
+                  {editIndex === conductor.id ? (
                     <input name="color" value={editData.color || ''} onChange={handleChange} style={{ flex: 1, padding: 7, borderRadius: 4, border: '1px solid #ccc' }} />
                   ) : (
                     <span style={{ flex: 1 }}>{conductor.color || '-'}</span>
                   )}
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                  <strong style={{ minWidth: 90, textAlign: 'right' }}>Token:</strong>
-                  {editIndex === idx ? (
-                    <input 
-                      name="token" 
-                      value={editData.token || ''} 
-                      onChange={handleChange} 
-                      placeholder="Token FCM para notificaciones"
-                      style={{ flex: 1, padding: 7, borderRadius: 4, border: '1px solid #ccc' }} 
-                    />
-                  ) : (
-                    <span style={{ flex: 1, fontSize: '12px', color: '#6b7280' }}>
-                      {conductor.token ? (
-                        <span style={{ color: '#10b981', fontWeight: 'bold' }}>
-                          ✅ ${conductor.token.substring(0, 20)}...
-                        </span>
-                      ) : (
-                        <span style={{ color: '#ef4444', fontWeight: 'bold' }}>
-                          ⚠️ No configurado
-                        </span>
-                      )}
-                    </span>
-                  )}
-                </div>
+
               </div>
               {/* Botones de acción y estatus en la misma línea, centrados y del mismo tamaño */}
               <div style={{ width: '100%', display: 'flex', justifyContent: 'center', gap: 16, marginTop: 32 }}>
-                {editIndex === idx ? (
+                {editIndex === conductor.id ? (
                   <>
                     <button onClick={handleSave} style={{ background: '#10b981', color: 'white', border: 'none', borderRadius: 6, padding: '14px 0', width: 120, fontWeight: 'bold', cursor: 'pointer', fontSize: 17 }}>Guardar</button>
                     <button onClick={handleCancel} style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: 6, padding: '14px 0', width: 120, fontWeight: 'bold', cursor: 'pointer', fontSize: 17 }}>Cancelar</button>
@@ -4103,10 +5117,10 @@ function ConductoresContent() {
                         border: 'none',
                         borderRadius: 6,
                         padding: '14px 0',
-                        width: 140,
+                        width: 120,
                         fontWeight: 'bold',
                         cursor: 'pointer',
-                        fontSize: 19
+                        fontSize: 17
                       }}
                     >
                       Editar
@@ -4120,21 +5134,343 @@ function ConductoresContent() {
                         border: 'none',
                         borderRadius: 10,
                         padding: '14px 0',
-                        width: 140,
+                        width: 120,
                         fontWeight: 'bold',
                         cursor: 'pointer',
-                        fontSize: 19,
+                        fontSize: 17,
                         transition: 'background 0.2s',
                         boxShadow: conductor.estatus ? '0 2px 8px #10b98133' : '0 2px 8px #ef444433'
                       }}
                     >
                       {conductor.estatus ? 'Activo' : 'Inactivo'}
                     </button>
+                    <button
+                      onClick={() => handleEliminarConductor(conductor)}
+                      style={{
+                        background: '#dc2626',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: 6,
+                        padding: '14px 0',
+                        width: 120,
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        fontSize: 17,
+                        transition: 'background 0.2s'
+                      }}
+                      onMouseEnter={(e) => e.target.style.background = '#b91c1c'}
+                      onMouseLeave={(e) => e.target.style.background = '#dc2626'}
+                    >
+                      🗑️ Eliminar
+                    </button>
                   </>
                 )}
               </div>
             </div>
           ))}
+        </div>
+      ) : (
+        // Vista de tabla
+        <div style={{
+          background: 'white',
+          borderRadius: 12,
+          border: '1px solid #e5e7eb',
+          overflow: 'hidden',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+        }}>
+          <div style={{ 
+            overflowX: 'auto',
+            maxWidth: '100%'
+          }}>
+            <table style={{
+              width: '100%',
+              borderCollapse: 'collapse',
+              fontSize: '14px',
+              minWidth: '800px'
+            }}>
+              <thead>
+                <tr style={{
+                  background: '#f8fafc',
+                  borderBottom: '2px solid #e5e7eb'
+                }}>
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    👤 Conductor
+                  </th>
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    📧 Correo
+                  </th>
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    📱 Teléfono
+                  </th>
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    🚗 Unidad
+                  </th>
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    🏷️ Placa
+                  </th>
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    🎨 Color
+                  </th>
+
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    📊 Estado
+                  </th>
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    ⚙️ Acciones
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {conductoresFiltrados.map((conductor, idx) => (
+                  <tr key={conductor.id} style={{
+                    borderBottom: '1px solid #f3f4f6',
+                    transition: 'background 0.2s'
+                  }}
+                  onMouseEnter={(e) => {
+                    e.currentTarget.style.background = '#f9fafb';
+                  }}
+                  onMouseLeave={(e) => {
+                    e.currentTarget.style.background = 'white';
+                  }}>
+                    <td style={{
+                      padding: '12px',
+                      color: '#1f2937',
+                      fontWeight: '500'
+                    }}>
+                      {editIndex === conductor.id ? (
+                        <input 
+                          name="nombre" 
+                          value={editData.nombre} 
+                          onChange={handleChange} 
+                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc', width: '100%' }} 
+                        />
+                      ) : (
+                        conductor.nombre
+                      )}
+                    </td>
+                    <td style={{
+                      padding: '12px',
+                      color: '#6b7280'
+                    }}>
+                      {conductor.correo}
+                    </td>
+                    <td style={{
+                      padding: '12px',
+                      color: '#374151'
+                    }}>
+                      {editIndex === conductor.id ? (
+                        <input 
+                          name="telefono" 
+                          value={editData.telefono} 
+                          onChange={handleChange} 
+                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc', width: '100%' }} 
+                        />
+                      ) : (
+                        conductor.telefono
+                      )}
+                    </td>
+                    <td style={{
+                      padding: '12px',
+                      color: '#374151'
+                    }}>
+                      {editIndex === conductor.id ? (
+                        <input 
+                          name="unidad" 
+                          value={editData.unidad} 
+                          onChange={handleChange} 
+                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc', width: '100%' }} 
+                        />
+                      ) : (
+                        conductor.unidad
+                      )}
+                    </td>
+                    <td style={{
+                      padding: '12px',
+                      color: '#374151'
+                    }}>
+                      {editIndex === conductor.id ? (
+                        <input 
+                          name="placa" 
+                          value={editData.placa || ''} 
+                          onChange={handleChange} 
+                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc', width: '100%' }} 
+                        />
+                      ) : (
+                        conductor.placa || '-'
+                      )}
+                    </td>
+                    <td style={{
+                      padding: '12px',
+                      color: '#374151'
+                    }}>
+                      {editIndex === conductor.id ? (
+                        <input 
+                          name="color" 
+                          value={editData.color || ''} 
+                          onChange={handleChange} 
+                          style={{ padding: '4px 8px', borderRadius: 4, border: '1px solid #ccc', width: '100%' }} 
+                        />
+                      ) : (
+                        conductor.color || '-'
+                      )}
+                    </td>
+
+                    <td style={{
+                      padding: '12px'
+                    }}>
+                      <span style={{
+                        background: conductor.estatus ? '#10b981' : '#ef4444',
+                        color: 'white',
+                        padding: '4px 8px',
+                        borderRadius: '12px',
+                        fontSize: '11px',
+                        fontWeight: 'bold',
+                        textTransform: 'uppercase'
+                      }}>
+                        {conductor.estatus ? 'Activo' : 'Inactivo'}
+                      </span>
+                    </td>
+                    <td style={{
+                      padding: '12px'
+                    }}>
+                      <div style={{ display: 'flex', gap: 8 }}>
+                        {editIndex === idx ? (
+                          <>
+                            <button
+                              onClick={handleSave}
+                              style={{
+                                background: '#10b981',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: 4,
+                                padding: '6px 12px',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ✅ Guardar
+                            </button>
+                            <button
+                              onClick={handleCancel}
+                              style={{
+                                background: '#ef4444',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: 4,
+                                padding: '6px 12px',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ❌ Cancelar
+                            </button>
+                          </>
+                        ) : (
+                          <>
+                            <button
+                              onClick={() => handleEdit(idx)}
+                              style={{
+                                background: '#3b82f6',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: 4,
+                                padding: '6px 12px',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              ✏️ Editar
+                            </button>
+                            <button
+                              onClick={() => handleToggleEstatusDirecto(conductor, idx)}
+                              style={{
+                                background: conductor.estatus ? '#ef4444' : '#10b981',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: 4,
+                                padding: '6px 12px',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              {conductor.estatus ? '❌ Desactivar' : '✅ Activar'}
+                            </button>
+                            <button
+                              onClick={() => handleEliminarConductor(conductor)}
+                              style={{
+                                background: '#dc2626',
+                                color: 'white',
+                                border: 'none',
+                                borderRadius: 4,
+                                padding: '6px 12px',
+                                fontSize: '12px',
+                                fontWeight: 'bold',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              🗑️ Eliminar
+                            </button>
+                          </>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         </div>
       )}
     </div>
@@ -4170,7 +5506,7 @@ function ReportesContent() {
       // Generar array de fechas entre fechaInicio y fechaFin
       const fechas = generarRangoFechas(fechaInicio, fechaFin);
       
-      // Cargar viajes de cada fecha
+      // Cargar viajes de cada fecha desde la estructura todosLosViajes
       for (const fecha of fechas) {
         try {
           const viajesRef = collection(db, 'todosLosViajes', fecha, 'viajes');
@@ -4181,7 +5517,7 @@ function ReportesContent() {
           viajesSnapshot.forEach((doc) => {
             const viaje = {
               id: doc.id,
-              fecha: fecha || 'N/A',
+              fecha: formatearFechaParaReporte(fecha),
               ...doc.data()
             };
             todosLosViajes.push(viaje);
@@ -4191,6 +5527,126 @@ function ReportesContent() {
           console.log(`⚠️ No se encontraron viajes para ${fecha}:`, error.message);
         }
       }
+      
+      // Verificar si hay más de 10 pedidos activos para evitar duplicación
+      try {
+        const pedidosEnCursoRef = collection(db, 'pedidoEnCurso');
+        const pedidosEnCursoSnapshot = await getDocs(pedidosEnCursoRef);
+        const totalPedidosActivos = pedidosEnCursoSnapshot.size;
+        
+        console.log(`📊 Pedidos activos detectados: ${totalPedidosActivos}`);
+        
+        // Solo cargar desde otras colecciones si hay menos de 10 pedidos activos
+        if (totalPedidosActivos < 10) {
+          console.log('📄 Cargando datos adicionales desde otras colecciones...');
+          
+          // Cargar desde pedidosDisponibles como respaldo
+          try {
+            const pedidosDisponiblesRef = collection(db, 'pedidosDisponibles');
+            const pedidosSnapshot = await getDocs(pedidosDisponiblesRef);
+            
+            pedidosSnapshot.forEach((doc) => {
+              const viaje = doc.data();
+              const fechaViaje = viaje.fecha ? new Date(viaje.fecha.toDate ? viaje.fecha.toDate() : viaje.fecha) : null;
+              
+              if (fechaViaje) {
+                const fechaFormateada = formatearFechaParaReporte(fechaViaje);
+                const viajeFormateado = {
+                  id: doc.id,
+                  fecha: fechaFormateada,
+                  ...viaje
+                };
+                todosLosViajes.push(viajeFormateado);
+                console.log('📄 Viaje disponible encontrado:', doc.id, viaje.nombreCliente || viaje.nombre);
+              }
+            });
+          } catch (error) {
+            console.log('⚠️ Error al cargar pedidosDisponibles:', error.message);
+          }
+          
+          // Cargar desde pedidoEnCurso como respaldo
+          pedidosEnCursoSnapshot.forEach((doc) => {
+            const viaje = doc.data();
+            const fechaViaje = viaje.fecha ? new Date(viaje.fecha.toDate ? viaje.fecha.toDate() : viaje.fecha) : null;
+            
+            if (fechaViaje) {
+              const fechaFormateada = formatearFechaParaReporte(fechaViaje);
+              const viajeFormateado = {
+                id: doc.id,
+                fecha: fechaFormateada,
+                ...viaje
+              };
+              todosLosViajes.push(viajeFormateado);
+              console.log('📄 Viaje en curso encontrado:', doc.id, viaje.nombreCliente || viaje.nombre);
+            }
+          });
+        } else {
+          console.log('⚠️ Se detectaron 10+ pedidos activos. Solo cargando desde todosLosViajes para evitar duplicación.');
+        }
+      } catch (error) {
+        console.log('⚠️ Error al verificar pedidos activos:', error.message);
+      }
+      
+      // Ordenar por fecha más reciente primero
+      todosLosViajes.sort((a, b) => {
+        try {
+          let fechaA = new Date(0);
+          let fechaB = new Date(0);
+          
+          if (a.fecha) {
+            if (typeof a.fecha === 'string') {
+              if (a.fecha.includes('/')) {
+                // Formato DD/MM/YYYY HH:MM o DD/MM/YYYY
+                const partes = a.fecha.split(' ');
+                if (partes.length >= 1) {
+                  const fechaParte = partes[0];
+                  fechaA = new Date(fechaParte.split('/').reverse().join('-'));
+                }
+              } else if (a.fecha.includes('-')) {
+                // Formato DD-MM-YYYY
+                fechaA = new Date(a.fecha.split('-').reverse().join('-'));
+              } else {
+                // Intentar parsear como fecha directa
+                fechaA = new Date(a.fecha);
+              }
+            } else if (a.fecha instanceof Date) {
+              fechaA = a.fecha;
+            } else if (a.fecha.toDate) {
+              // Timestamp de Firestore
+              fechaA = a.fecha.toDate();
+            }
+          }
+          
+          if (b.fecha) {
+            if (typeof b.fecha === 'string') {
+              if (b.fecha.includes('/')) {
+                // Formato DD/MM/YYYY HH:MM o DD/MM/YYYY
+                const partes = b.fecha.split(' ');
+                if (partes.length >= 1) {
+                  const fechaParte = partes[0];
+                  fechaB = new Date(fechaParte.split('/').reverse().join('-'));
+                }
+              } else if (b.fecha.includes('-')) {
+                // Formato DD-MM-YYYY
+                fechaB = new Date(b.fecha.split('-').reverse().join('-'));
+              } else {
+                // Intentar parsear como fecha directa
+                fechaB = new Date(b.fecha);
+              }
+            } else if (b.fecha instanceof Date) {
+              fechaB = b.fecha;
+            } else if (b.fecha.toDate) {
+              // Timestamp de Firestore
+              fechaB = b.fecha.toDate();
+            }
+          }
+          
+          return fechaB - fechaA;
+        } catch (error) {
+          console.error('Error al ordenar fechas:', error);
+          return 0;
+        }
+      });
       
       console.log(`✅ Se encontraron ${todosLosViajes.length} viajes en total`);
       setViajes(todosLosViajes);
@@ -4282,11 +5738,144 @@ function ReportesContent() {
 
   // Función para formatear fecha para mostrar
   const formatearFechaMostrar = (fecha) => {
-    if (!fecha || typeof fecha !== 'string') return 'N/A';
+    if (!fecha) return 'N/A';
+    
+    // Si ya está en formato DD/MM/YYYY HH:MM, devolverlo tal como está
+    if (typeof fecha === 'string' && fecha.includes('/') && fecha.includes(':')) {
+      return fecha;
+    }
+    
+    // Si ya está en formato DD/MM/YYYY, agregar hora
+    if (typeof fecha === 'string' && fecha.includes('/') && !fecha.includes(':')) {
+      return fecha + ' 00:00';
+    }
+    
+    // Si está en formato DD-MM-YYYY
+    if (typeof fecha === 'string' && fecha.includes('-')) {
     const partes = fecha.split('-');
-    if (partes.length !== 3) return 'N/A';
+      if (partes.length === 3) {
     const [dia, mes, año] = partes;
-    return `${dia}/${mes}/${año}`;
+        return `${dia}/${mes}/${año} 00:00`;
+      }
+    }
+    
+    // Si es un timestamp de Firestore
+    if (fecha.toDate && typeof fecha.toDate === 'function') {
+      try {
+        const fechaObj = fecha.toDate();
+        const dia = String(fechaObj.getDate()).padStart(2, '0');
+        const mes = String(fechaObj.getMonth() + 1).padStart(2, '0');
+        const año = fechaObj.getFullYear();
+        const hora = String(fechaObj.getHours()).padStart(2, '0');
+        const minutos = String(fechaObj.getMinutes()).padStart(2, '0');
+        return `${dia}/${mes}/${año} ${hora}:${minutos}`;
+      } catch (error) {
+        console.error('Error al formatear timestamp de Firestore:', error);
+      }
+    }
+    
+    // Si es un objeto Date o timestamp
+    try {
+      const fechaObj = new Date(fecha);
+      if (!isNaN(fechaObj.getTime())) {
+        const dia = String(fechaObj.getDate()).padStart(2, '0');
+        const mes = String(fechaObj.getMonth() + 1).padStart(2, '0');
+        const año = fechaObj.getFullYear();
+        const hora = String(fechaObj.getHours()).padStart(2, '0');
+        const minutos = String(fechaObj.getMinutes()).padStart(2, '0');
+        return `${dia}/${mes}/${año} ${hora}:${minutos}`;
+      }
+    } catch (error) {
+      console.error('Error al formatear fecha:', error);
+    }
+    
+    return 'N/A';
+  };
+
+  // Función para formatear fecha para reporte
+  const formatearFechaParaReporte = (fecha) => {
+    if (!fecha) return 'N/A';
+    
+    try {
+      let fechaObj;
+      
+      // Si es un timestamp de Firestore
+      if (fecha.toDate && typeof fecha.toDate === 'function') {
+        fechaObj = fecha.toDate();
+      }
+      // Si es un objeto Date
+      else if (fecha instanceof Date) {
+        fechaObj = fecha;
+      }
+      // Si es una cadena de fecha
+      else if (typeof fecha === 'string') {
+        fechaObj = new Date(fecha);
+      }
+      // Si es un timestamp (número)
+      else if (typeof fecha === 'number') {
+        fechaObj = new Date(fecha);
+      }
+      // Intentar parsear como fecha
+      else {
+        fechaObj = new Date(fecha);
+      }
+      
+      if (isNaN(fechaObj.getTime())) {
+        console.warn('Fecha inválida:', fecha);
+        return 'N/A';
+      }
+      
+      const dia = String(fechaObj.getDate()).padStart(2, '0');
+      const mes = String(fechaObj.getMonth() + 1).padStart(2, '0');
+      const año = fechaObj.getFullYear();
+      const hora = String(fechaObj.getHours()).padStart(2, '0');
+      const minutos = String(fechaObj.getMinutes()).padStart(2, '0');
+      
+      return `${dia}/${mes}/${año} ${hora}:${minutos}`;
+    } catch (error) {
+      console.error('Error al formatear fecha:', error, 'Fecha original:', fecha);
+      return 'N/A';
+    }
+  };
+
+  // Función para formatear valor monetario
+  const formatearValor = (valor) => {
+    if (!valor) return '$0.00';
+    
+    try {
+      const numero = parseFloat(valor);
+      if (isNaN(numero)) return '$0.00';
+      
+      return `$${numero.toFixed(2)}`;
+    } catch (error) {
+      console.error('Error al formatear valor:', error);
+      return '$0.00';
+    }
+  };
+
+  // Función para formatear tiempo
+  const formatearTiempo = (tiempo, minutos) => {
+    if (tiempo) {
+      // Si ya está formateado como tiempo (HH:MM:SS)
+      if (typeof tiempo === 'string' && tiempo.includes(':')) {
+        return tiempo;
+      }
+    }
+    
+    if (minutos) {
+      const mins = parseInt(minutos);
+      if (!isNaN(mins)) {
+        if (mins < 60) {
+          return `${mins} min`;
+        } else {
+          const horas = Math.floor(mins / 60);
+          const minsRestantes = mins % 60;
+          return `${horas}h ${minsRestantes}min`;
+        }
+      }
+    }
+    
+    return 'N/A';
   };
 
   // Función para obtener estado con color
@@ -4296,12 +5885,31 @@ function ReportesContent() {
       'Finalizado': '#3b82f6',
       'En Curso': '#f59e0b',
       'Cancelado': '#ef4444',
-      'Pendiente': '#6b7280'
+      'Pendiente': '#6b7280',
+      'Disponible': '#3b82f6',
+      'Aceptado': '#10b981'
     };
     
+    // Normalizar el estado para mejor comparación
+    const estadoNormalizado = estado ? estado.toString().toLowerCase() : '';
+    
+    let color = '#6b7280'; // Color por defecto
+    
+    if (estadoNormalizado.includes('aceptado') || estadoNormalizado.includes('finalizado')) {
+      color = '#10b981';
+    } else if (estadoNormalizado.includes('disponible')) {
+      color = '#3b82f6';
+    } else if (estadoNormalizado.includes('curso')) {
+      color = '#f59e0b';
+    } else if (estadoNormalizado.includes('cancelado')) {
+      color = '#ef4444';
+    } else if (estadoNormalizado.includes('pendiente')) {
+      color = '#6b7280';
+    }
+    
     return {
-      texto: estado,
-      color: colores[estado] || '#6b7280'
+      texto: estado || 'N/A',
+      color: color
     };
   };
 
@@ -4494,12 +6102,14 @@ function ReportesContent() {
               boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
             }}>
               <div style={{
-                overflowX: 'auto'
+                overflowX: 'auto',
+                maxWidth: '100%'
               }}>
                 <table style={{
                   width: '100%',
                   borderCollapse: 'collapse',
-                  fontSize: '14px'
+                  fontSize: '14px',
+                  minWidth: '1000px'
                 }}>
                   <thead>
                     <tr style={{
@@ -4625,7 +6235,7 @@ function ReportesContent() {
                             color: '#6b7280',
                             fontSize: '13px'
                           }}>
-                            {viaje.placa || 'Sin placa'} • {viaje.clave || viaje.id}
+                            {viaje.placa || 'Sin placa'} • {viaje.clave || viaje.viajes || 'N/A'}
                           </td>
                           <td style={{
                             padding: '12px',
@@ -4648,13 +6258,13 @@ function ReportesContent() {
                             color: '#059669',
                             fontWeight: 'bold'
                           }}>
-                            ${viaje.valor || viaje.montoTotalCalculado || '0.00'}
+                            {formatearValor(viaje.valor || viaje.montoTotalCalculado)}
                           </td>
                           <td style={{
                             padding: '12px',
                             color: '#374151'
                           }}>
-                            {viaje.tiempoTotal || (viaje.minutos ? `${viaje.minutos} min` : 'N/A')}
+                            {formatearTiempo(viaje.tiempoTotal, viaje.minutos)}
                           </td>
                           <td style={{
                             padding: '12px',
@@ -4667,7 +6277,7 @@ function ReportesContent() {
                             padding: '12px',
                             color: '#374151'
                           }}>
-                            {viaje.codigo || viaje.idConductor || 'N/A'}
+                            {viaje.nombre || viaje.codigo || viaje.idConductor || 'N/A'}
                           </td>
                           <td style={{
                             padding: '12px'
@@ -4736,7 +6346,9 @@ function MainContent({ activeSection }) {
       flex: 1,
       padding: 0,
       background: '#f9fafb',
-      overflow: 'auto'
+      overflow: 'auto',
+      minWidth: 0,
+      width: '100%'
     }}>
       {renderContent()}
     </main>
