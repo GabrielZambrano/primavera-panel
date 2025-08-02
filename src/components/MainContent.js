@@ -446,6 +446,7 @@ function TaxiForm() {
   const [nombre, setNombre] = useState('');
   const [coordenadas, setCoordenadas] = useState('');
   const [direccion, setDireccion] = useState('');
+  const [base, setBase] = useState('0');
   const [tiempo, setTiempo] = useState('');
   const [unidad, setUnidad] = useState('');
   // Inicializar modoSeleccion desde localStorage o por defecto 'manual'
@@ -473,9 +474,10 @@ function TaxiForm() {
   });
        const [viajesAsignados, setViajesAsignados] = useState([]);
    const [cargandoViajes, setCargandoViajes] = useState(false);
-   const [editandoViaje, setEditandoViaje] = useState(null);
-   const [tiempoEdit, setTiempoEdit] = useState('');
-   const [unidadEdit, setUnidadEdit] = useState('');
+     const [editandoViaje, setEditandoViaje] = useState(null);
+  const [tiempoEdit, setTiempoEdit] = useState('');
+  const [unidadEdit, setUnidadEdit] = useState('');
+  const [baseEdit, setBaseEdit] = useState('');
    const [pedidosEnCurso, setPedidosEnCurso] = useState([]);
    const [cargandoPedidosCurso, setCargandoPedidosCurso] = useState(false);
   // Nuevo estado para direcciones guardadas
@@ -491,6 +493,9 @@ function TaxiForm() {
     pedido: null,
     coleccion: '' // 'pedidosDisponibles' o 'pedidoEnCurso'
   });
+
+  // Estado para controlar múltiples inserciones
+  const [insertandoRegistro, setInsertandoRegistro] = useState(false);
 
   // Guardar modoSeleccion en localStorage cuando cambie
   useEffect(() => {
@@ -1496,8 +1501,60 @@ function TaxiForm() {
     setTextoEditado('');
   };
 
+  // Función para convertir número a texto de base
+  const convertirNumeroABase = (numero) => {
+    if (numero === '0' || numero === 0) {
+      return 'aire';
+    }
+    return `base ${numero}`;
+  };
+
+  // Nueva función para limpiar solo tiempo y unidad, manteniendo datos del cliente
+  const limpiarTiempoYUnidad = () => {
+    setBase('0');
+    setTiempo('');
+    setUnidad('');
+    setMapaVisible(false); // Oculta el mapa
+  };
+
+  // Nueva función para limpiar formulario completo y enfocar teléfono
+  const limpiarFormularioCompleto = () => {
+    setTelefono('');
+    setNombre('');
+    setCoordenadas('');
+    setDireccion('');
+    setBase('0');
+    setTiempo('');
+    setUnidad('');
+    setUsuarioEncontrado(null);
+    setBuscandoUsuario(false);
+    setMostrarModal(false);
+    setNuevoCliente({ nombre: '', direccion: '', coordenadas: '', email: '' });
+    setMapaVisible(false);
+    setDireccionesGuardadas([]);
+    setDireccionSeleccionada(null);
+    setEditandoDireccion(null);
+    setTextoEditado('');
+    
+    // Enfocar el campo de teléfono después de limpiar
+    setTimeout(() => {
+      const telefonoInput = document.querySelector('input[placeholder="Ingrese Teléfono"]');
+      if (telefonoInput) {
+        telefonoInput.focus();
+      }
+    }, 100);
+  };
+
      // Función para insertar pedido disponible
    const handleInsertarViajePendiente = async () => {
+     // Evitar múltiples inserciones simultáneas
+     if (insertandoRegistro) {
+       console.log('⚠️ Ya se está insertando un registro, esperando...');
+       return;
+     }
+     
+     setInsertandoRegistro(true);
+     
      try {
 
        const fecha = new Date(); // Timestamp
@@ -1547,6 +1604,7 @@ function TaxiForm() {
          telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
          telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
          direccion: direccion || '',
+         base: convertirNumeroABase(base || '0'), // Nuevo campo base
          destino: '', // Se puede editar después
          fecha: fecha,
          estado: 'Disponible',
@@ -1586,20 +1644,28 @@ function TaxiForm() {
        // Ocultar el mapa después del registro exitoso
        setMapaVisible(false);
        
-       // Limpiar el formulario
-       limpiarFormulario();
+       // Limpiar formulario completo y enfocar teléfono
+       limpiarFormularioCompleto();
        
        // Registro silencioso - sin mostrar alert de éxito
        console.log('✅ Pedido registrado silenciosamente en pedidosDisponibles');
      } catch (error) {
        console.error('Error al registrar el pedido:', error);
        setModal({ open: true, success: false, message: 'Error al registrar el pedido.' });
+     } finally {
+       setInsertandoRegistro(false);
      }
    };
 
    // Función para insertar viaje en modo manual
    // Incluye el token del conductor para notificaciones push cuando se asigna manualmente
    const handleInsertarViaje = async () => {
+     // Evitar múltiples inserciones simultáneas
+     if (insertandoRegistro) {
+       console.log('⚠️ Ya se está insertando un registro, esperando...');
+       return;
+     }
+     
      // Validaciones
      if (!tiempo.trim()) {
        setModal({ open: true, success: false, message: 'Por favor, ingrese el tiempo del viaje.' });
@@ -1609,6 +1675,8 @@ function TaxiForm() {
        setModal({ open: true, success: false, message: 'Por favor, ingrese el número de unidad.' });
        return;
      }
+     
+     setInsertandoRegistro(true);
 
     try {
       // Buscar datos del conductor por número de unidad
@@ -1681,6 +1749,7 @@ function TaxiForm() {
          telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
          telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
          direccion: direccion || '',
+         base: convertirNumeroABase(base || '0'), // Nuevo campo base
          destino: 'QUITO-ECUADOR', // Destino por defecto
          fecha: fecha,
          estado: 'Aceptado',
@@ -1767,15 +1836,17 @@ function TaxiForm() {
        // Ocultar el mapa después del registro exitoso
        setMapaVisible(false);
        
-       // Limpiar el formulario
-       limpiarFormulario();
+       // Limpiar formulario completo y enfocar teléfono
+       limpiarFormularioCompleto();
        
        // Registro silencioso - sin mostrar alert de éxito
        console.log(`✅ Pedido registrado silenciosamente en "En Curso" - Conductor: ${conductorData.nombre}, Unidad: ${unidad}`);
     } catch (error) {
       console.error('Error al registrar el viaje:', error);
       setModal({ open: true, success: false, message: 'Error al registrar el pedido en curso.' });
-         }
+    } finally {
+      setInsertandoRegistro(false);
+    }
    };
 
      // Función para abrir modal de acciones del pedido
@@ -1895,20 +1966,22 @@ function TaxiForm() {
     setEditandoViaje(viaje.id);
     setTiempoEdit(viaje.tiempo || '');
     setUnidadEdit(viaje.numeroUnidad || '');
+    setBaseEdit(viaje.base || '0');
   };
 
    // Función para cancelar edición
-   const cancelarEdicionViaje = () => {
-     setEditandoViaje(null);
-     setTiempoEdit('');
-     setUnidadEdit('');
-   };
+     const cancelarEdicionViaje = () => {
+    setEditandoViaje(null);
+    setTiempoEdit('');
+    setUnidadEdit('');
+    setBaseEdit('0');
+  };
 
    // Función para mover pedido de disponibles a en curso
    // Incluye el token del conductor para notificaciones push cuando se asigna manualmente
    const guardarEdicionViaje = async (viajeId) => {
-     if (!tiempoEdit.trim() || !unidadEdit.trim()) {
-       setModal({ open: true, success: false, message: 'Por favor, ingrese tiempo y número de unidad.' });
+     if (!baseEdit.trim() || !tiempoEdit.trim() || !unidadEdit.trim()) {
+       setModal({ open: true, success: false, message: 'Por favor, ingrese base, tiempo y número de unidad.' });
        return;
      }
 
@@ -1951,6 +2024,7 @@ function TaxiForm() {
        const pedidoEnCursoData = {
          ...pedidoOriginal,
          // Datos de asignación
+         base: convertirNumeroABase(baseEdit),
          tiempo: tiempoEdit,
          numeroUnidad: unidadEdit,
          unidad: unidadEdit,
@@ -2038,6 +2112,14 @@ function TaxiForm() {
  
 
   const handleSolicitarAplicacion = async () => {
+    // Evitar múltiples inserciones simultáneas
+    if (insertandoRegistro) {
+      console.log('⚠️ Ya se está insertando un registro, esperando...');
+      return;
+    }
+    
+    setInsertandoRegistro(true);
+    
     try {
 
       // Coordenadas por defecto si no hay coordenadas
@@ -2087,6 +2169,7 @@ function TaxiForm() {
         telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
         telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
         direccion: direccion || '',
+        base: convertirNumeroABase(base || '0'), // Nuevo campo base
         destino: 'QUITO-ECUADOR',
         fecha: fecha, // Timestamp
         estado: 'Disponible',
@@ -2133,13 +2216,15 @@ function TaxiForm() {
        // Ocultar el mapa después del registro exitoso
        setMapaVisible(false);
        
-       // Limpiar el formulario
-       limpiarFormulario();
+       // Limpiar formulario completo y enfocar teléfono
+       limpiarFormularioCompleto();
 
      /// setModal({ open: true, success: true, message: '¡Pedido registrado directamente en la base de datos!' });
     } catch (error) {
       console.error('Error al registrar el pedido:', error);
       setModal({ open: true, success: false, message: 'Error al registrar el pedido en la base de datos.' });
+    } finally {
+      setInsertandoRegistro(false);
     }
   };
 
@@ -2482,6 +2567,7 @@ function TaxiForm() {
             onKeyDown={(e) => {
               if (e.key === 'Delete' || e.key === 'Enter') {
                 e.preventDefault();
+                e.stopPropagation(); // Prevenir que el evento llegue al formulario
                 handleInsertarViajePendiente();
               }
             }}
@@ -2535,6 +2621,27 @@ function TaxiForm() {
              <>
                <input
                  type="text"
+                 placeholder="Base"
+                 value={base}
+                 onChange={(e) => {
+                   const valor = e.target.value;
+                   // Solo permitir números
+                   if (/^\d*$/.test(valor)) {
+                     setBase(valor);
+                   }
+                 }}
+                 maxLength="3"
+                 style={{
+                   padding: '12px 16px',
+                   border: '2px solid #666',
+                   borderRadius: 4,
+                   fontSize: '18px',
+                   fontWeight: 'bold',
+                   width: 100
+                 }}
+               />
+               <input
+                 type="text"
                  placeholder="Tiempo"
                  value={tiempo}
                  onChange={(e) => setTiempo(e.target.value)}
@@ -2556,6 +2663,7 @@ function TaxiForm() {
                   onKeyPress={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
+                      e.stopPropagation(); // Prevenir que el evento llegue al formulario
                       if (tiempo.trim() && unidad.trim()) {
                         handleInsertarViaje();
                       } else {
@@ -2996,7 +3104,10 @@ function TaxiForm() {
             <button
               onClick={() => {
                 setModal({ ...modal, open: false });
-                limpiarFormulario();
+                // Solo limpiar el formulario si no es un mensaje de registro de cliente
+                if (!modal.message.includes('registrado') && !modal.message.includes('cliente')) {
+                  limpiarFormulario();
+                }
               }}
               style={{
                 background: modal.success ? '#10b981' : '#ef4444',
@@ -3159,6 +3270,16 @@ function TaxiForm() {
                      borderBottom: '2px solid #e5e7eb',
                      whiteSpace: 'nowrap'
                    }}>
+                     🏢 Base
+                   </th>
+                   <th style={{
+                     padding: '12px 16px',
+                     textAlign: 'center',
+                     fontWeight: 'bold',
+                     color: '#374151',
+                     borderBottom: '2px solid #e5e7eb',
+                     whiteSpace: 'nowrap'
+                   }}>
                      ⏱️ Tiempo
                    </th>
                    <th style={{
@@ -3249,38 +3370,74 @@ function TaxiForm() {
                      }}>
                        {viaje.direccion || '-'}
                      </td>
-                                           <td style={{
-                        padding: '12px 16px',
-                        textAlign: 'center',
-                        fontWeight: 'bold',
-                        color: '#059669'
-                      }}>
-                        {!viaje.tiempo ? (
-                        <input
-                          type="text"
-                          value={editandoViaje === viaje.id ? tiempoEdit : ''}
-                          onChange={(e) => {
-                            if (editandoViaje !== viaje.id) {
-                              iniciarEdicionViaje(viaje);
-                            }
-                            setTiempoEdit(e.target.value);
-                          }}
-                          maxLength="3"
-                          style={{
-                            width: '60px',
-                            padding: '4px 8px',
-                            border: '1px solid #ccc',
-                            borderRadius: 4,
-                            textAlign: 'center',
-                            fontSize: 12,
-                            fontWeight: 'bold'
-                          }}
-                          placeholder="Tiempo"
-                        />
-                      ) : (
-                        `${viaje.tiempo} min`
-                      )}
-                      </td>
+                     <td style={{
+                       padding: '12px 16px',
+                       textAlign: 'center',
+                       fontWeight: 'bold',
+                       color: '#7c3aed'
+                     }}>
+                       {!viaje.base ? (
+                         <input
+                           type="text"
+                           value={editandoViaje === viaje.id ? baseEdit : ''}
+                           onChange={(e) => {
+                             const valor = e.target.value;
+                             // Solo permitir números
+                             if (/^\d*$/.test(valor)) {
+                               if (editandoViaje !== viaje.id) {
+                                 iniciarEdicionViaje(viaje);
+                               }
+                               setBaseEdit(valor);
+                             }
+                           }}
+                           maxLength="3"
+                           style={{
+                             width: '80px',
+                             padding: '4px 8px',
+                             border: '1px solid #ccc',
+                             borderRadius: 4,
+                             textAlign: 'center',
+                             fontSize: 12,
+                             fontWeight: 'bold'
+                           }}
+                           placeholder="Base"
+                         />
+                       ) : (
+                         viaje.base
+                       )}
+                     </td>
+                     <td style={{
+                       padding: '12px 16px',
+                       textAlign: 'center',
+                       fontWeight: 'bold',
+                       color: '#059669'
+                     }}>
+                       {!viaje.tiempo ? (
+                       <input
+                         type="text"
+                         value={editandoViaje === viaje.id ? tiempoEdit : ''}
+                         onChange={(e) => {
+                           if (editandoViaje !== viaje.id) {
+                             iniciarEdicionViaje(viaje);
+                           }
+                           setTiempoEdit(e.target.value);
+                         }}
+                         maxLength="3"
+                         style={{
+                           width: '60px',
+                           padding: '4px 8px',
+                           border: '1px solid #ccc',
+                           borderRadius: 4,
+                           textAlign: 'center',
+                           fontSize: 12,
+                           fontWeight: 'bold'
+                         }}
+                         placeholder="Tiempo"
+                       />
+                     ) : (
+                       `${viaje.tiempo} min`
+                     )}
+                     </td>
                       <td style={{
                         padding: '12px 16px',
                         textAlign: 'center',
@@ -3312,7 +3469,7 @@ function TaxiForm() {
                             onKeyPress={(e) => {
                               if (e.key === 'Enter') {
                                 e.preventDefault();
-                                if (tiempoEdit.trim() && unidadEdit.trim()) {
+                                if (baseEdit.trim() && tiempoEdit.trim() && unidadEdit.trim()) {
                                   guardarEdicionViaje(viaje.id);
                                 }
                               }
@@ -3322,6 +3479,7 @@ function TaxiForm() {
                           viaje.numeroUnidad
                         )}
                       </td>
+
                       <td style={{
                         padding: '12px 16px',
                         textAlign: 'center'
@@ -3518,6 +3676,16 @@ function TaxiForm() {
                     borderBottom: '2px solid #e5e7eb',
                     whiteSpace: 'nowrap'
                   }}>
+                    🏢 Base
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
                     🏷️ Tipo
                   </th>
                 </tr>
@@ -3612,6 +3780,14 @@ function TaxiForm() {
                       color: '#dc2626'
                     }}>
                       {pedido.unidad || pedido.numeroUnidad || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      fontWeight: 'bold',
+                      color: '#7c3aed'
+                    }}>
+                      {pedido.base || '-'}
                     </td>
                     <td style={{
                       padding: '12px 16px',
