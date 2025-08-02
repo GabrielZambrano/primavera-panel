@@ -1688,7 +1688,8 @@ function TaxiForm() {
       const conductoresSnapshot = await getDocs(conductoresQuery);
       
       if (conductoresSnapshot.empty) {
-        setModal({ open: true, success: false, message: `No se encontró un conductor con la unidad ${unidad}` });
+        setModal({ open: true, success: false, message: `No se encontró un conductor con la unidad ${unidad}. Por favor, ingrese una unidad válida.` });
+        // NO hacer return, permitir que el usuario siga editando
         return;
       }
 
@@ -1995,7 +1996,8 @@ function TaxiForm() {
        const conductoresSnapshot = await getDocs(conductoresQuery);
        
        if (conductoresSnapshot.empty) {
-         setModal({ open: true, success: false, message: `No se encontró un conductor con la unidad ${unidadEdit}` });
+         setModal({ open: true, success: false, message: `No se encontró un conductor con la unidad ${unidadEdit}. Por favor, ingrese una unidad válida.` });
+         // NO hacer return, permitir que el usuario siga editando
          return;
        }
 
