@@ -1998,6 +1998,8 @@ function TaxiForm() {
        if (conductoresSnapshot.empty) {
          setModal({ open: true, success: false, message: `No se encontró un conductor con la unidad ${unidadEdit}. Por favor, ingrese una unidad válida.` });
          // NO hacer return, permitir que el usuario siga editando
+         // NO limpiar el formulario, mantener los datos
+         // Mantener el estado de edición activo
          return;
        }
 
@@ -3107,7 +3109,11 @@ function TaxiForm() {
               onClick={() => {
                 setModal({ ...modal, open: false });
                 // Solo limpiar el formulario si no es un mensaje de registro de cliente
-                if (!modal.message.includes('registrado') && !modal.message.includes('cliente')) {
+                // Y NO limpiar si es un mensaje de unidad no encontrada
+                if (!modal.message.includes('registrado') && 
+                    !modal.message.includes('cliente') && 
+                    !modal.message.includes('unidad') && 
+                    !modal.message.includes('conductor')) {
                   limpiarFormulario();
                 }
               }}
@@ -3471,6 +3477,7 @@ function TaxiForm() {
                             onKeyPress={(e) => {
                               if (e.key === 'Enter') {
                                 e.preventDefault();
+                                e.stopPropagation(); // Prevenir propagación del evento
                                 if (baseEdit.trim() && tiempoEdit.trim() && unidadEdit.trim()) {
                                   guardarEdicionViaje(viaje.id);
                                 }
