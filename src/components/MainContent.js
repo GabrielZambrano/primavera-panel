@@ -1926,8 +1926,8 @@ function TaxiForm() {
         fechaActualizacion: new Date()
       });
 
-      // Si el estado es de cancelación, guardar también en todosLosViajes
-      if (nuevoEstado === 'Cancelado' || nuevoEstado === 'Rechazado') {
+      // Si el estado es de cancelación o finalización, guardar también en todosLosViajes
+      if (nuevoEstado === 'Cancelado' || nuevoEstado === 'Rechazado' || nuevoEstado === 'Finalizado') {
         const fechaActual = new Date();
         const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
           day: '2-digit',
@@ -1935,17 +1935,19 @@ function TaxiForm() {
           year: 'numeric'
         }).replace(/\//g, '-');
 
-        const viajeCanceladoData = {
+        const viajeData = {
           ...modalAccionesPedido.pedido,
           estado: nuevoEstado,
-          fechaCancelacion: fechaActual,
-          motivoCancelacion: nuevoEstado === 'Cancelado' ? 'Pedido cancelado' : 'Pedido rechazado',
-          fechaRegistroCancelacion: fechaActual
+          fechaFinalizacion: fechaActual,
+          motivoFinalizacion: nuevoEstado === 'Cancelado' ? 'Pedido cancelado' : 
+                             nuevoEstado === 'Rechazado' ? 'Pedido rechazado' : 
+                             'Pedido finalizado',
+          fechaRegistroFinalizacion: fechaActual
         };
 
         // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
         const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
-        await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+        await setDoc(doc(db, rutaTodosLosViajes), viajeData);
 
         // Eliminar el documento original de la colección
         await deleteDoc(pedidoRef);
@@ -1959,6 +1961,47 @@ function TaxiForm() {
     } catch (error) {
       console.error('❌ Error al cambiar estado del pedido:', error);
       setModal({ open: true, success: false, message: 'Error al cambiar el estado del pedido.' });
+    }
+  };
+
+  // Función específica para finalizar pedido
+  const finalizarPedido = async () => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      const fechaActual = new Date();
+      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+      
+      // Preparar datos del viaje finalizado
+      const viajeFinalizadoData = {
+        ...modalAccionesPedido.pedido,
+        estado: 'Finalizado',
+        pedido: 'Finalizado',
+        fechaFinalizacion: fechaActual,
+        fechaRegistroFinalizacion: fechaActual,
+        motivoFinalizacion: 'Pedido completado exitosamente'
+      };
+
+      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
+      await setDoc(doc(db, rutaTodosLosViajes), viajeFinalizadoData);
+
+      // Eliminar el documento original de la colección
+      await deleteDoc(pedidoRef);
+
+      console.log(`✅ Pedido finalizado y guardado en todosLosViajes: ${rutaTodosLosViajes}`);
+      setModal({ open: true, success: true, message: 'Pedido finalizado exitosamente.' });
+      
+      cerrarModalAccionesPedido();
+    } catch (error) {
+      console.error('❌ Error al finalizar el pedido:', error);
+      setModal({ open: true, success: false, message: 'Error al finalizar el pedido.' });
     }
   };
 
@@ -3272,6 +3315,16 @@ function TaxiForm() {
                    </th>
                    <th style={{
                      padding: '12px 16px',
+                     textAlign: 'left',
+                     fontWeight: 'bold',
+                     color: '#374151',
+                     borderBottom: '2px solid #e5e7eb',
+                     whiteSpace: 'nowrap'
+                   }}>
+                     🏘️ Sector
+                   </th>
+                   <th style={{
+                     padding: '12px 16px',
                      textAlign: 'center',
                      fontWeight: 'bold',
                      color: '#374151',
@@ -3377,6 +3430,16 @@ function TaxiForm() {
                        whiteSpace: 'nowrap'
                      }}>
                        {viaje.direccion || '-'}
+                     </td>
+                     <td style={{
+                       padding: '12px 16px',
+                       color: '#374151',
+                       maxWidth: 150,
+                       overflow: 'hidden',
+                       textOverflow: 'ellipsis',
+                       whiteSpace: 'nowrap'
+                     }}>
+                       {viaje.sector || '-'}
                      </td>
                      <td style={{
                        padding: '12px 16px',
@@ -4449,6 +4512,29 @@ function TaxiForm() {
                 }}
               >
                 ✅ Marcar como Completado
+              </button>
+
+              <button
+                onClick={finalizarPedido}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#10b981',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#059669';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#10b981';
+                }}
+              >
+                🏁 Finalizar Pedido
               </button>
 
               <button
