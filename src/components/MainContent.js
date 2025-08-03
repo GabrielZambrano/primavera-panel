@@ -3439,7 +3439,7 @@ function TaxiForm() {
                        textOverflow: 'ellipsis',
                        whiteSpace: 'nowrap'
                      }}>
-                       {viaje.sector || '-'}
+                       {viaje.destino || '-'}
                      </td>
                      <td style={{
                        padding: '12px 16px',
