@@ -449,11 +449,8 @@ function TaxiForm() {
   const [base, setBase] = useState('0');
   const [tiempo, setTiempo] = useState('');
   const [unidad, setUnidad] = useState('');
-  // Inicializar modoSeleccion desde localStorage o por defecto 'manual'
-  const [modoSeleccion, setModoSeleccion] = useState(() => {
-    const modoGuardado = localStorage.getItem('modoSeleccion');
-    return modoGuardado || 'manual'; // Por defecto 'manual' si no hay valor guardado
-  });
+  // Inicializar modoSeleccion (fijo en manual, no cambia la interfaz)
+  const [modoSeleccion, setModoSeleccion] = useState('manual');
   const [usuarioEncontrado, setUsuarioEncontrado] = useState(null);
   const [buscandoUsuario, setBuscandoUsuario] = useState(false);
   const [mostrarModal, setMostrarModal] = useState(false);
@@ -497,6 +494,96 @@ function TaxiForm() {
   // Estado para controlar múltiples inserciones
   const [insertandoRegistro, setInsertandoRegistro] = useState(false);
 
+  // Estado para mostrar el texto de la selección
+  const [textoSeleccion, setTextoSeleccion] = useState('Selección Manual');
+
+  // Función para actualizar la configuración en la colección
+  const actualizarConfiguracion = async (nuevoEstado) => {
+    try {
+      // Obtener el documento de configuración
+      const configRef = doc(db, 'configuracion', 'status');
+      
+      // Actualizar el documento
+      await updateDoc(configRef, {
+        estado: nuevoEstado,
+        fechaActualizacion: new Date()
+      });
+      
+      console.log(`✅ Estado de configuración actualizado a: ${nuevoEstado ? 'Automático' : 'Manual'}`);
+    } catch (error) {
+      console.error('❌ Error al actualizar configuración:', error);
+    }
+  };
+
+  // Función para cambiar el estado en la colección configuracion (F1)
+  const cambiarEstadoConfiguracion = async () => {
+    try {
+      // Obtener el documento de configuración
+      const configRef = doc(db, 'configuracion', 'status');
+      
+      // Obtener el estado actual del documento
+      const configDoc = await getDoc(configRef);
+      
+      if (configDoc.exists()) {
+        const estadoActual = configDoc.data().estado;
+        // Cambiar al estado opuesto (true = automático, false = manual)
+        const nuevoEstado = !estadoActual;
+        
+        // Actualizar el documento
+        await updateDoc(configRef, {
+          estado: nuevoEstado,
+          fechaActualizacion: new Date()
+        });
+        
+        // Actualizar solo el texto mostrado
+        setTextoSeleccion(nuevoEstado ? 'Selección Automática' : 'Selección Manual');
+        
+        console.log(`✅ Estado de configuración cambiado de ${estadoActual ? 'Automático' : 'Manual'} a ${nuevoEstado ? 'Automático' : 'Manual'}`);
+      } else {
+        // Si el documento no existe, crearlo con estado manual (false)
+        await setDoc(configRef, {
+          estado: false,
+          fechaActualizacion: new Date()
+        });
+        
+        setTextoSeleccion('Selección Manual');
+        console.log('✅ Documento de configuración creado con estado Manual');
+      }
+    } catch (error) {
+      console.error('❌ Error al actualizar configuración:', error);
+    }
+  };
+
+  // Función para cargar el estado inicial desde la colección configuracion
+  const cargarEstadoConfiguracion = async () => {
+    try {
+      const configRef = doc(db, 'configuracion', 'status');
+      const configDoc = await getDoc(configRef);
+      
+      if (configDoc.exists()) {
+        const estado = configDoc.data().estado;
+        // Actualizar el texto según el estado en la BD
+        setTextoSeleccion(estado ? 'Selección Automática' : 'Selección Manual');
+        console.log(`📋 Estado cargado: ${estado ? 'Automático' : 'Manual'} - Texto: ${estado ? 'Selección Automática' : 'Selección Manual'}`);
+      } else {
+        // Si no existe el documento, crear con estado manual por defecto
+        await setDoc(configRef, {
+          estado: false,
+          fechaActualizacion: new Date()
+        });
+        setTextoSeleccion('Selección Manual');
+        console.log('📋 Documento de configuración creado con estado Manual por defecto');
+      }
+    } catch (error) {
+      console.error('❌ Error al cargar configuración:', error);
+    }
+  };
+
+  // Cargar estado inicial al montar el componente (solo para crear documento si no existe)
+  useEffect(() => {
+    cargarEstadoConfiguracion();
+  }, []);
+
   // Guardar modoSeleccion en localStorage cuando cambie
   useEffect(() => {
     localStorage.setItem('modoSeleccion', modoSeleccion);
@@ -507,9 +594,8 @@ function TaxiForm() {
     const handleKeyDown = (event) => {
       if (event.key === 'F1') {
         event.preventDefault();
-        setModoSeleccion(prevModo =>
-          prevModo === 'aplicacion' ? 'manual' : 'aplicacion'
-        );
+        // Solo cambiar el estado en la colección configuracion
+        cambiarEstadoConfiguracion();
       }
       if (event.key === 'Escape') {
         setMostrarModal(false);
@@ -519,7 +605,7 @@ function TaxiForm() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, []);
+  }, [modoSeleccion]); // Agregar modoSeleccion como dependencia
 
   // Configurar listeners en tiempo real para las colecciones
   useEffect(() => {
@@ -2542,8 +2628,17 @@ function TaxiForm() {
             }}
           />
           <select 
-            value={modoSeleccion}
-            onChange={(e) => setModoSeleccion(e.target.value)}
+            value={textoSeleccion}
+            onChange={(e) => {
+              const nuevoTexto = e.target.value;
+              setTextoSeleccion(nuevoTexto);
+              
+              // Determinar el nuevo estado basado en el texto seleccionado
+              const nuevoEstado = nuevoTexto === 'Selección Automática';
+              
+              // Actualizar la colección de configuración
+              actualizarConfiguracion(nuevoEstado);
+            }}
             style={{
               padding: '12px 16px',
               border: '2px solid #666',
@@ -2554,9 +2649,8 @@ function TaxiForm() {
               flex: '1 1 200px'
             }}
           >
-            <option value="">Selecciona</option>
-            <option value="manual">Selección Manual</option>
-            <option value="aplicacion">Modo Aplicación</option>
+            <option value="Selección Manual">Selección Manual</option>
+            <option value="Selección Automática">Selección Automática</option>
           </select>
         </div>
 
