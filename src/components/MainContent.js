@@ -2074,6 +2074,12 @@ function TaxiForm() {
     }
   });
 
+  // Estado para pre-registro de voucher
+  const [preRegistroVoucher, setPreRegistroVoucher] = useState({
+    numeroAutorizacion: null,
+    activo: false
+  });
+
   // Lista de empresas para el voucher
   const empresasVoucher = [
     'LOGIRAN O RANZA',
@@ -2089,6 +2095,52 @@ function TaxiForm() {
     'FUNDACION MATILDE SUR',
     'FUND.MATILDE NORTE'
   ];
+
+  // Función para pre-registrar voucher
+  const preRegistrarVoucher = async () => {
+    if (!telefono.trim() || !nombre.trim()) {
+      setModal({ open: true, success: false, message: 'Debe ingresar teléfono y nombre para pre-registrar voucher.' });
+      return;
+    }
+
+    try {
+      // Obtener el último número de autorización
+      const vouchersRef = collection(db, 'voucherCorporativos');
+      const q = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
+      const querySnapshot = await getDocs(q);
+      
+      let numeroAutorizacion = 40000; // Número inicial
+      
+      if (!querySnapshot.empty) {
+        const ultimoVoucher = querySnapshot.docs[0].data();
+        numeroAutorizacion = Math.max(40000, (ultimoVoucher.numeroAutorizacion || 39999) + 1);
+      }
+
+      // Guardar pre-registro en Firestore
+      const preRegistroData = {
+        numeroAutorizacion: numeroAutorizacion,
+        telefono: telefono,
+        nombreCliente: nombre,
+        direccion: direccion,
+        fechaPreRegistro: new Date(),
+        estado: 'Pre-Registrado',
+        activo: true
+      };
+
+      await addDoc(collection(db, 'voucherCorporativos'), preRegistroData);
+
+      setPreRegistroVoucher({
+        numeroAutorizacion: numeroAutorizacion,
+        activo: true
+      });
+
+      console.log('✅ Voucher pre-registrado con número:', numeroAutorizacion);
+      setModal({ open: true, success: true, message: `Voucher pre-registrado exitosamente. Número de autorización: ${numeroAutorizacion}` });
+    } catch (error) {
+      console.error('❌ Error al pre-registrar voucher:', error);
+      setModal({ open: true, success: false, message: 'Error al pre-registrar el voucher.' });
+    }
+  };
 
   // Función para generar voucher
   const generarVoucher = async () => {
@@ -2140,21 +2192,32 @@ function TaxiForm() {
         empresa: ''
       }
     });
+    
+    // Limpiar pre-registro cuando se cierra el modal
+    setPreRegistroVoucher({
+      numeroAutorizacion: null,
+      activo: false
+    });
   };
 
   // Función para guardar voucher
   const guardarVoucher = async () => {
     try {
-      // Obtener el último número de autorización
-      const vouchersRef = collection(db, 'voucherCorporativos');
-      const q = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
-      const querySnapshot = await getDocs(q);
-      
       let numeroAutorizacion = 40000; // Número inicial
       
-      if (!querySnapshot.empty) {
-        const ultimoVoucher = querySnapshot.docs[0].data();
-        numeroAutorizacion = Math.max(40000, (ultimoVoucher.numeroAutorizacion || 39999) + 1);
+      // Si hay un pre-registro activo, usar ese número
+      if (preRegistroVoucher.activo && preRegistroVoucher.numeroAutorizacion) {
+        numeroAutorizacion = preRegistroVoucher.numeroAutorizacion;
+      } else {
+        // Obtener el último número de autorización
+        const vouchersRef = collection(db, 'voucherCorporativos');
+        const q = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
+        const querySnapshot = await getDocs(q);
+        
+        if (!querySnapshot.empty) {
+          const ultimoVoucher = querySnapshot.docs[0].data();
+          numeroAutorizacion = Math.max(40000, (ultimoVoucher.numeroAutorizacion || 39999) + 1);
+        }
       }
 
       // Crear el voucher con número único
@@ -2169,33 +2232,29 @@ function TaxiForm() {
       // Guardar en Firestore
       await addDoc(collection(db, 'voucherCorporativos'), voucherData);
 
-      // Guardar también en todosLosViajes como viaje finalizado tipo voucher
+      // Guardar en pedidoFinalizadoVoucher
       const fechaActual = new Date();
-      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
-        day: '2-digit',
-        month: '2-digit',
-        year: 'numeric'
-      }).replace(/\//g, '-');
-
-      const viajeVoucherData = {
+      const voucherFinalizadoData = {
         ...modalAccionesPedido.pedido,
-        estado: 'Voucher',
-        pedido: 'Voucher',
+        estado: 'Voucher Finalizado',
+        pedido: 'Voucher Finalizado',
         fechaFinalizacion: fechaActual,
         fechaRegistroFinalizacion: fechaActual,
         motivoFinalizacion: 'Voucher corporativo generado',
         numeroAutorizacionVoucher: numeroAutorizacion,
-        voucherData: voucherData
+        voucherData: voucherData,
+        esVoucher: true,
+        colorFondo: '#fef3c7'
       };
 
-      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido?.id}`;
-      await setDoc(doc(db, rutaTodosLosViajes), viajeVoucherData);
+      // Guardar en la colección pedidoFinalizadoVoucher
+      await addDoc(collection(db, 'pedidoFinalizadoVoucher'), voucherFinalizadoData);
 
-      // Eliminar el pedido original de la colección
+      // Eliminar el pedido original de la colección pedidoEnCurso
       if (modalAccionesPedido.pedido?.id) {
-        const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+        const pedidoRef = doc(db, 'pedidoEnCurso', modalAccionesPedido.pedido.id);
         await deleteDoc(pedidoRef);
+        console.log('✅ Pedido eliminado de pedidoEnCurso y guardado en pedidoFinalizadoVoucher');
       }
 
       console.log('✅ Voucher guardado exitosamente con número:', numeroAutorizacion);
@@ -2410,7 +2469,9 @@ function TaxiForm() {
         pedido: 'Finalizado',
         fechaFinalizacion: fechaActual,
         fechaRegistroFinalizacion: fechaActual,
-        motivoFinalizacion: 'Pedido completado exitosamente'
+        motivoFinalizacion: 'Pedido completado exitosamente',
+        esViajeFinalizado: true,
+        colorFondo: '#dbeafe' // Color de fondo azul claro para viajes finalizados
       };
 
       // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
@@ -3014,6 +3075,37 @@ function TaxiForm() {
               minWidth: '200px'
             }}
           />
+          <button
+            type="button"
+            onClick={preRegistrarVoucher}
+            disabled={!telefono.trim() || !nombre.trim()}
+            style={{
+              padding: '12px 16px',
+              background: (!telefono.trim() || !nombre.trim()) ? '#9ca3af' : '#7c3aed',
+              color: 'white',
+              border: 'none',
+              borderRadius: 4,
+              fontSize: '16px',
+              fontWeight: 'bold',
+              cursor: (!telefono.trim() || !nombre.trim()) ? 'not-allowed' : 'pointer',
+              transition: 'background 0.2s ease',
+              flex: '0 0 auto',
+              minWidth: '180px',
+              opacity: (!telefono.trim() || !nombre.trim()) ? 0.6 : 1
+            }}
+            onMouseEnter={(e) => {
+              if (telefono.trim() && nombre.trim()) {
+                e.target.style.background = '#6d28d9';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (telefono.trim() && nombre.trim()) {
+                e.target.style.background = '#7c3aed';
+              }
+            }}
+          >
+            {preRegistroVoucher.activo ? `🎫 Voucher #${preRegistroVoucher.numeroAutorizacion}` : '🎫 Pre-Registrar Voucher'}
+          </button>
           {modoSeleccion === 'aplicacion' && (
             <input
               type="text"
@@ -7377,13 +7469,17 @@ function ReportesContent() {
                       return (
                         <tr key={viaje.id} style={{
                           borderBottom: '1px solid #f3f4f6',
-                          transition: 'background 0.2s'
+                          transition: 'background 0.2s',
+                          backgroundColor: viaje.esVoucher ? '#fef3c7' : 
+                                         viaje.esViajeFinalizado ? '#dbeafe' : 'white' // Amarillo para vouchers, azul para finalizados
                         }}
                         onMouseEnter={(e) => {
-                          e.currentTarget.style.background = '#f9fafb';
+                          e.currentTarget.style.background = viaje.esVoucher ? '#fde68a' : 
+                                                           viaje.esViajeFinalizado ? '#bfdbfe' : '#f9fafb';
                         }}
                         onMouseLeave={(e) => {
-                          e.currentTarget.style.background = 'white';
+                          e.currentTarget.style.background = viaje.esVoucher ? '#fef3c7' : 
+                                                           viaje.esViajeFinalizado ? '#dbeafe' : 'white';
                         }}>
                           <td style={{
                             padding: '12px',
