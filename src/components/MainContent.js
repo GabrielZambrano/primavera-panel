@@ -2057,20 +2057,103 @@ function TaxiForm() {
     }
   };
 
+  // Estados para modal de voucher
+  const [modalVoucher, setModalVoucher] = useState({
+    open: false,
+    voucher: {
+      fechaHora: '',
+      nombreCliente: '',
+      telefono: '',
+      direccion: '',
+      destino: '',
+      valor: '',
+      motivo: '',
+      informacionViaje: ''
+    }
+  });
+
   // Función para generar voucher
   const generarVoucher = async () => {
     if (!modalAccionesPedido.pedido) return;
 
     try {
-      // Aquí puedes implementar la lógica para generar el voucher
-      console.log('🎫 Generando voucher para pedido:', modalAccionesPedido.pedido.id);
+      const pedido = modalAccionesPedido.pedido;
       
-      // Por ahora solo cerramos el modal
+      // Preparar datos del voucher
+      const voucherData = {
+        fechaHora: new Date().toLocaleString('es-EC'),
+        nombreCliente: pedido.nombreCliente || pedido.codigo || 'N/A',
+        telefono: pedido.telefono || 'N/A',
+        direccion: pedido.direccion || 'N/A',
+        destino: pedido.destino || 'N/A',
+        valor: pedido.valor || '0.00',
+        motivo: '',
+        informacionViaje: `Base: ${pedido.base || 'N/A'}, Tiempo: ${pedido.tiempo || 'N/A'}, Unidad: ${pedido.unidad || 'N/A'}`
+      };
+
+      setModalVoucher({
+        open: true,
+        voucher: voucherData
+      });
+
       cerrarModalAccionesPedido();
-      setModal({ open: true, success: true, message: 'Voucher generado exitosamente.' });
     } catch (error) {
-      console.error('❌ Error al generar voucher:', error);
-      setModal({ open: true, success: false, message: 'Error al generar el voucher.' });
+      console.error('❌ Error al preparar voucher:', error);
+      setModal({ open: true, success: false, message: 'Error al preparar el voucher.' });
+    }
+  };
+
+  // Función para cerrar modal de voucher
+  const cerrarModalVoucher = () => {
+    setModalVoucher({
+      open: false,
+      voucher: {
+        fechaHora: '',
+        nombreCliente: '',
+        telefono: '',
+        direccion: '',
+        destino: '',
+        valor: '',
+        motivo: '',
+        informacionViaje: ''
+      }
+    });
+  };
+
+  // Función para guardar voucher
+  const guardarVoucher = async () => {
+    try {
+      // Obtener el último número de autorización
+      const vouchersRef = collection(db, 'voucherCorporativos');
+      const q = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
+      const querySnapshot = await getDocs(q);
+      
+      let numeroAutorizacion = 40000; // Número inicial
+      
+      if (!querySnapshot.empty) {
+        const ultimoVoucher = querySnapshot.docs[0].data();
+        numeroAutorizacion = Math.max(40000, (ultimoVoucher.numeroAutorizacion || 39999) + 1);
+      }
+
+      // Crear el voucher con número único
+      const voucherData = {
+        ...modalVoucher.voucher,
+        numeroAutorizacion: numeroAutorizacion,
+        fechaCreacion: new Date(),
+        pedidoId: modalAccionesPedido.pedido?.id || 'N/A',
+        estado: 'Activo'
+      };
+
+      // Guardar en Firestore
+      await addDoc(collection(db, 'voucherCorporativos'), voucherData);
+
+      console.log('✅ Voucher guardado exitosamente con número:', numeroAutorizacion);
+      setModal({ open: true, success: true, message: `Voucher generado exitosamente. Número de autorización: ${numeroAutorizacion}` });
+      
+      cerrarModalVoucher();
+    } catch (error) {
+      console.error('❌ Error al guardar voucher:', error);
+      setModal({ open: true, success: false, message: 'Error al guardar el voucher.' });
     }
   };
 
@@ -4946,6 +5029,312 @@ function TaxiForm() {
                 }}
               >
                 ✖️ Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de voucher */}
+      {modalVoucher.open && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '30px',
+            borderRadius: '12px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            width: '600px',
+            maxWidth: '90vw',
+            maxHeight: '90vh',
+            overflowY: 'auto'
+          }}>
+            <h3 style={{
+              margin: '0 0 20px 0',
+              color: '#1f2937',
+              fontSize: '20px',
+              fontWeight: 'bold',
+              textAlign: 'center'
+            }}>
+              🎫 Generar Voucher Corporativo
+            </h3>
+            
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '20px',
+              marginBottom: '20px'
+            }}>
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  📅 Fecha y Hora
+                </label>
+                <input
+                  type="text"
+                  value={modalVoucher.voucher.fechaHora}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, fechaHora: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  👤 Nombre del Cliente
+                </label>
+                <input
+                  type="text"
+                  value={modalVoucher.voucher.nombreCliente}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, nombreCliente: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  📞 Teléfono
+                </label>
+                <input
+                  type="text"
+                  value={modalVoucher.voucher.telefono}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, telefono: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  💰 Valor
+                </label>
+                <input
+                  type="text"
+                  value={modalVoucher.voucher.valor}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, valor: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  📍 Dirección
+                </label>
+                <input
+                  type="text"
+                  value={modalVoucher.voucher.direccion}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, direccion: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  🎯 Destino
+                </label>
+                <input
+                  type="text"
+                  value={modalVoucher.voucher.destino}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, destino: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  📝 Motivo
+                </label>
+                <textarea
+                  value={modalVoucher.voucher.motivo}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, motivo: e.target.value }
+                  }))}
+                  rows="3"
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    resize: 'vertical'
+                  }}
+                />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  🚗 Información del Viaje
+                </label>
+                <textarea
+                  value={modalVoucher.voucher.informacionViaje}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, informacionViaje: e.target.value }
+                  }))}
+                  rows="3"
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    resize: 'vertical'
+                  }}
+                />
+              </div>
+            </div>
+
+            <div style={{
+              display: 'flex',
+              gap: '10px',
+              justifyContent: 'center'
+            }}>
+              <button
+                onClick={guardarVoucher}
+                style={{
+                  padding: '12px 24px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#10b981',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#059669';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#10b981';
+                }}
+              >
+                💾 Guardar Voucher
+              </button>
+
+              <button
+                onClick={cerrarModalVoucher}
+                style={{
+                  padding: '12px 24px',
+                  border: '2px solid #6b7280',
+                  borderRadius: '8px',
+                  backgroundColor: 'transparent',
+                  color: '#6b7280',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#f3f4f6';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent';
+                }}
+              >
+                ❌ Cancelar
               </button>
             </div>
           </div>
