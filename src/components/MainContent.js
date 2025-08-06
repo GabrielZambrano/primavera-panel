@@ -2068,9 +2068,27 @@ function TaxiForm() {
       destino: '',
       valor: '',
       motivo: '',
-      informacionViaje: ''
+      informacionViaje: '',
+      numeroUnidad: '',
+      empresa: ''
     }
   });
+
+  // Lista de empresas para el voucher
+  const empresasVoucher = [
+    'LOGIRAN O RANZA',
+    'ETERNIT',
+    'NOVACERO',
+    'RENE CHARDON',
+    'FUND.TIERRA NUEVA (CARDENAL DE LA TORRE)',
+    'HOSP.UN CANTO A LA VIDA (LAS CUADRAS)',
+    'SUNCHEMICAL O SINCLAIR',
+    'HYUNDAI/ASIACAR',
+    'AUDESUR O NISSAN - AV MARISCAL SUCRE',
+    'COLISIONES AUDESUR - AV TABIAZO',
+    'FUNDACION MATILDE SUR',
+    'FUND.MATILDE NORTE'
+  ];
 
   // Función para generar voucher
   const generarVoucher = async () => {
@@ -2085,10 +2103,12 @@ function TaxiForm() {
         nombreCliente: pedido.nombreCliente || pedido.codigo || 'N/A',
         telefono: pedido.telefono || 'N/A',
         direccion: pedido.direccion || 'N/A',
-        destino: pedido.destino || 'N/A',
+        destino: '', // Campo vacío para que el usuario lo digite
         valor: pedido.valor || '0.00',
         motivo: '',
-        informacionViaje: `Base: ${pedido.base || 'N/A'}, Tiempo: ${pedido.tiempo || 'N/A'}, Unidad: ${pedido.unidad || 'N/A'}`
+        informacionViaje: `Base: ${pedido.base || 'N/A'}, Tiempo: ${pedido.tiempo || 'N/A'}, Unidad: ${pedido.unidad || 'N/A'}`,
+        numeroUnidad: pedido.unidad || '',
+        empresa: ''
       };
 
       setModalVoucher({
@@ -2115,7 +2135,9 @@ function TaxiForm() {
         destino: '',
         valor: '',
         motivo: '',
-        informacionViaje: ''
+        informacionViaje: '',
+        numeroUnidad: '',
+        empresa: ''
       }
     });
   };
@@ -3929,9 +3951,9 @@ function TaxiForm() {
                            const valor = e.target.value;
                            // Solo permitir números y máximo 2 dígitos
                            if (/^\d{0,2}$/.test(valor)) {
-                             if (editandoViaje !== viaje.id) {
-                               iniciarEdicionViaje(viaje);
-                             }
+                           if (editandoViaje !== viaje.id) {
+                             iniciarEdicionViaje(viaje);
+                           }
                              setTiempoEdit(valor);
                            }
                          }}
@@ -4844,122 +4866,122 @@ function TaxiForm() {
               {/* Botones para pedidos en curso */}
               {modalAccionesPedido.coleccion === 'pedidoEnCurso' && (
                 <>
-                  <button
-                    onClick={cancelarPedidoPorCliente}
-                    style={{
-                      padding: '12px 20px',
-                      border: 'none',
-                      borderRadius: '8px',
-                      backgroundColor: '#dc2626',
-                      color: 'white',
-                      fontSize: '14px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = '#b91c1c';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = '#dc2626';
-                    }}
-                  >
+              <button
+                onClick={cancelarPedidoPorCliente}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#dc2626',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#b91c1c';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#dc2626';
+                }}
+              >
                     ❌ Cancelado por Cliente
-                  </button>
+              </button>
 
-                  <button
+              <button
                     onClick={cancelarPedidoPorUnidad}
-                    style={{
-                      padding: '12px 20px',
-                      border: 'none',
-                      borderRadius: '8px',
-                      backgroundColor: '#ef4444',
-                      color: 'white',
-                      fontSize: '14px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = '#dc2626';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = '#ef4444';
-                    }}
-                  >
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#ef4444',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#dc2626';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#ef4444';
+                }}
+              >
                     🚫 Cancelado por Unidad
-                  </button>
+              </button>
 
-                  <button
+              <button
                     onClick={generarVoucher}
-                    style={{
-                      padding: '12px 20px',
-                      border: 'none',
-                      borderRadius: '8px',
-                      backgroundColor: '#7c3aed',
-                      color: 'white',
-                      fontSize: '14px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.target.style.backgroundColor = '#6d28d9';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.target.style.backgroundColor = '#7c3aed';
-                    }}
-                  >
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#7c3aed',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#6d28d9';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#7c3aed';
+                }}
+              >
                     🎫 Generar Voucher
-                  </button>
+              </button>
 
-                  <button
+              <button
                     onClick={finalizarPedido}
-                    style={{
-                      padding: '12px 20px',
-                      border: 'none',
-                      borderRadius: '8px',
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
                       backgroundColor: '#10b981',
-                      color: 'white',
-                      fontSize: '14px',
-                      fontWeight: 'bold',
-                      cursor: 'pointer',
-                      transition: 'all 0.2s'
-                    }}
-                    onMouseEnter={(e) => {
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
                       e.target.style.backgroundColor = '#059669';
-                    }}
-                    onMouseLeave={(e) => {
+                }}
+                onMouseLeave={(e) => {
                       e.target.style.backgroundColor = '#10b981';
-                    }}
-                  >
+                }}
+              >
                     🏁 Finalizar Pedido
-                  </button>
+              </button>
 
                   {/* Botón Ver Ubicación - Solo para pedidos de aplicación */}
                   {modalAccionesPedido.pedido?.tipopedido === 'Automático' && (
-                    <button
+              <button
                       onClick={verUbicacion}
-                      style={{
-                        padding: '12px 20px',
-                        border: 'none',
-                        borderRadius: '8px',
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
                         backgroundColor: '#3b82f6',
-                        color: 'white',
-                        fontSize: '14px',
-                        fontWeight: 'bold',
-                        cursor: 'pointer',
-                        transition: 'all 0.2s'
-                      }}
-                      onMouseEnter={(e) => {
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
                         e.target.style.backgroundColor = '#2563eb';
-                      }}
-                      onMouseLeave={(e) => {
+                }}
+                onMouseLeave={(e) => {
                         e.target.style.backgroundColor = '#3b82f6';
-                      }}
-                    >
+                }}
+              >
                       📍 Ver Ubicación
-                    </button>
+              </button>
                   )}
                 </>
               )}
@@ -5207,6 +5229,65 @@ function TaxiForm() {
                     fontSize: '14px'
                   }}
                 />
+              </div>
+
+              <div>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  🚗 Número de Unidad
+                </label>
+                <input
+                  type="text"
+                  value={modalVoucher.voucher.numeroUnidad}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, numeroUnidad: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  🏢 Empresa
+                </label>
+                <select
+                  value={modalVoucher.voucher.empresa}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, empresa: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px',
+                    backgroundColor: 'white'
+                  }}
+                >
+                  <option value="">Seleccione una empresa</option>
+                  {empresasVoucher.map((empresa, index) => (
+                    <option key={index} value={empresa}>
+                      {empresa}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div style={{ gridColumn: '1 / -1' }}>
