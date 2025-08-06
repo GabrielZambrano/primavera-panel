@@ -2147,7 +2147,37 @@ function TaxiForm() {
       // Guardar en Firestore
       await addDoc(collection(db, 'voucherCorporativos'), voucherData);
 
+      // Guardar también en todosLosViajes como viaje finalizado tipo voucher
+      const fechaActual = new Date();
+      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const viajeVoucherData = {
+        ...modalAccionesPedido.pedido,
+        estado: 'Voucher',
+        pedido: 'Voucher',
+        fechaFinalizacion: fechaActual,
+        fechaRegistroFinalizacion: fechaActual,
+        motivoFinalizacion: 'Voucher corporativo generado',
+        numeroAutorizacionVoucher: numeroAutorizacion,
+        voucherData: voucherData
+      };
+
+      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido?.id}`;
+      await setDoc(doc(db, rutaTodosLosViajes), viajeVoucherData);
+
+      // Eliminar el pedido original de la colección
+      if (modalAccionesPedido.pedido?.id) {
+        const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+        await deleteDoc(pedidoRef);
+      }
+
       console.log('✅ Voucher guardado exitosamente con número:', numeroAutorizacion);
+      console.log('✅ Viaje guardado en todosLosViajes con estado Voucher');
       setModal({ open: true, success: true, message: `Voucher generado exitosamente. Número de autorización: ${numeroAutorizacion}` });
       
       cerrarModalVoucher();
@@ -6931,6 +6961,7 @@ function ReportesContent() {
     const colores = {
       'Aceptado': '#10b981',
       'Finalizado': '#3b82f6',
+      'Voucher': '#7c3aed', // Color púrpura para vouchers
       'En Curso': '#f59e0b',
       'Cancelado': '#ef4444',
       'Pendiente': '#6b7280',
@@ -6945,6 +6976,8 @@ function ReportesContent() {
     
     if (estadoNormalizado.includes('aceptado') || estadoNormalizado.includes('finalizado')) {
       color = '#10b981';
+    } else if (estadoNormalizado.includes('voucher')) {
+      color = '#7c3aed'; // Color púrpura para vouchers
     } else if (estadoNormalizado.includes('disponible')) {
       color = '#3b82f6';
     } else if (estadoNormalizado.includes('curso')) {
