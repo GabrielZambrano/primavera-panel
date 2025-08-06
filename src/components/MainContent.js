@@ -484,6 +484,11 @@ function TaxiForm() {
   const [editandoDireccion, setEditandoDireccion] = useState(null);
   const [textoEditado, setTextoEditado] = useState('');
 
+  // Referencias para los inputs del formulario
+  const baseInputRef = useRef(null);
+  const tiempoInputRef = useRef(null);
+  const unidadInputRef = useRef(null);
+
   // Estados para modal de acciones del pedido
   const [modalAccionesPedido, setModalAccionesPedido] = useState({
     open: false,
@@ -1050,6 +1055,14 @@ function TaxiForm() {
             setDireccionSeleccionada(null);
             console.log('⚠️ No hay direcciones guardadas para este cliente');
           }
+          
+          // Enfocar el input de base después de encontrar el cliente
+          setTimeout(() => {
+            if (baseInputRef.current) {
+              baseInputRef.current.focus();
+              console.log('🎯 Enfoque automático en input de base');
+            }
+          }, 100);
         } else {
           // Cliente no encontrado, mostrar modal de registro
           console.log('❌ Cliente no encontrado, mostrando modal de registro');
@@ -1999,6 +2012,197 @@ function TaxiForm() {
     }
   };
 
+  // Función para cancelar pedido por unidad
+  const cancelarPedidoPorUnidad = async () => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+      
+      // Actualizar el pedido original
+      await updateDoc(pedidoRef, {
+        estado: 'Cancelado por Unidad',
+        fechaCancelacion: new Date(),
+        motivoCancelacion: 'Cancelado por la unidad'
+      });
+
+      // Guardar en todosLosViajes con la estructura de fecha
+      const fechaActual = new Date();
+      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const viajeCanceladoData = {
+        ...modalAccionesPedido.pedido,
+        estado: 'Cancelado por Unidad',
+        fechaCancelacion: fechaActual,
+        motivoCancelacion: 'Cancelado por la unidad',
+        fechaRegistroCancelacion: fechaActual
+      };
+
+      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
+      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+
+      // Eliminar el documento original de la colección
+      await deleteDoc(pedidoRef);
+
+      console.log('✅ Pedido cancelado por unidad, guardado en todosLosViajes y eliminado de la colección original');
+      cerrarModalAccionesPedido();
+    } catch (error) {
+      console.error('❌ Error al cancelar pedido por unidad:', error);
+      setModal({ open: true, success: false, message: 'Error al cancelar el pedido por unidad.' });
+    }
+  };
+
+  // Función para generar voucher
+  const generarVoucher = async () => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      // Aquí puedes implementar la lógica para generar el voucher
+      console.log('🎫 Generando voucher para pedido:', modalAccionesPedido.pedido.id);
+      
+      // Por ahora solo cerramos el modal
+      cerrarModalAccionesPedido();
+      setModal({ open: true, success: true, message: 'Voucher generado exitosamente.' });
+    } catch (error) {
+      console.error('❌ Error al generar voucher:', error);
+      setModal({ open: true, success: false, message: 'Error al generar el voucher.' });
+    }
+  };
+
+  // Función para ver ubicación
+  const verUbicacion = () => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      const pedido = modalAccionesPedido.pedido;
+      const latitud = pedido.latitud || pedido.latitudConductor;
+      const longitud = pedido.longitud || pedido.longitudConductor;
+      
+      if (latitud && longitud) {
+        // Abrir Google Maps con las coordenadas
+        const url = `https://www.google.com/maps?q=${latitud},${longitud}`;
+        window.open(url, '_blank');
+        console.log('📍 Abriendo ubicación en Google Maps:', url);
+      } else {
+        console.log('⚠️ No hay coordenadas disponibles para este pedido');
+        setModal({ open: true, success: false, message: 'No hay coordenadas disponibles para este pedido.' });
+      }
+    } catch (error) {
+      console.error('❌ Error al abrir ubicación:', error);
+      setModal({ open: true, success: false, message: 'Error al abrir la ubicación.' });
+    }
+  };
+
+  // Funciones para pedidos disponibles
+  const cancelarPedidoSinAsignar = async () => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+      
+      // Actualizar el pedido original
+      await updateDoc(pedidoRef, {
+        estado: 'Cancelado por Cliente Sin Asignar',
+        fechaCancelacion: new Date(),
+        motivoCancelacion: 'Cancelado por el cliente sin asignar unidad'
+      });
+
+      // Guardar en todosLosViajes con la estructura de fecha
+      const fechaActual = new Date();
+      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const viajeCanceladoData = {
+        ...modalAccionesPedido.pedido,
+        estado: 'Cancelado por Cliente Sin Asignar',
+        fechaCancelacion: fechaActual,
+        motivoCancelacion: 'Cancelado por el cliente sin asignar unidad',
+        fechaRegistroCancelacion: fechaActual
+      };
+
+      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
+      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+
+      // Eliminar el documento original de la colección
+      await deleteDoc(pedidoRef);
+
+      console.log('✅ Pedido cancelado sin asignar, guardado en todosLosViajes y eliminado de la colección original');
+      cerrarModalAccionesPedido();
+    } catch (error) {
+      console.error('❌ Error al cancelar pedido sin asignar:', error);
+      setModal({ open: true, success: false, message: 'Error al cancelar el pedido sin asignar.' });
+    }
+  };
+
+  const noHuboUnidadDisponible = async () => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+      
+      // Actualizar el pedido original
+      await updateDoc(pedidoRef, {
+        estado: 'No Hubo Unidad Disponible',
+        fechaCancelacion: new Date(),
+        motivoCancelacion: 'No hubo unidad disponible para asignar'
+      });
+
+      // Guardar en todosLosViajes con la estructura de fecha
+      const fechaActual = new Date();
+      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const viajeCanceladoData = {
+        ...modalAccionesPedido.pedido,
+        estado: 'No Hubo Unidad Disponible',
+        fechaCancelacion: fechaActual,
+        motivoCancelacion: 'No hubo unidad disponible para asignar',
+        fechaRegistroCancelacion: fechaActual
+      };
+
+      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
+      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+
+      // Eliminar el documento original de la colección
+      await deleteDoc(pedidoRef);
+
+      console.log('✅ Pedido marcado como no hubo unidad disponible, guardado en todosLosViajes y eliminado de la colección original');
+      cerrarModalAccionesPedido();
+    } catch (error) {
+      console.error('❌ Error al marcar como no hubo unidad disponible:', error);
+      setModal({ open: true, success: false, message: 'Error al marcar como no hubo unidad disponible.' });
+    }
+  };
+
+  const generarReserva = async () => {
+    if (!modalAccionesPedido.pedido) return;
+
+    try {
+      // Aquí puedes implementar la lógica para generar la reserva
+      console.log('📅 Generando reserva para pedido:', modalAccionesPedido.pedido.id);
+      
+      // Por ahora solo cerramos el modal
+      cerrarModalAccionesPedido();
+      setModal({ open: true, success: true, message: 'Reserva generada exitosamente.' });
+    } catch (error) {
+      console.error('❌ Error al generar reserva:', error);
+      setModal({ open: true, success: false, message: 'Error al generar la reserva.' });
+    }
+  };
+
   // Función para cambiar estado del pedido
   const cambiarEstadoPedido = async (nuevoEstado) => {
     if (!modalAccionesPedido.pedido) return;
@@ -2761,17 +2965,27 @@ function TaxiForm() {
                      {modoSeleccion === 'manual' && (
              <>
                <input
+                 ref={baseInputRef}
                  type="text"
                  placeholder="Base"
                  value={base}
                  onChange={(e) => {
                    const valor = e.target.value;
-                   // Solo permitir números
-                   if (/^\d*$/.test(valor)) {
+                   // Solo permitir 01, 02, 03 (máximo 2 dígitos)
+                   if (valor === '' || valor === '0' || valor === '01' || valor === '02' || valor === '03') {
                      setBase(valor);
+                     // Si se completaron 2 dígitos, saltar al campo tiempo
+                     if (valor.length === 2) {
+                       setTimeout(() => {
+                         if (tiempoInputRef.current) {
+                           tiempoInputRef.current.focus();
+                           console.log('🎯 Saltando automáticamente al campo tiempo');
+                         }
+                       }, 50);
+                     }
                    }
                  }}
-                 maxLength="3"
+                 maxLength="2"
                  style={{
                    padding: '12px 16px',
                    border: '2px solid #666',
@@ -2782,11 +2996,27 @@ function TaxiForm() {
                  }}
                />
                <input
+                 ref={tiempoInputRef}
                  type="text"
                  placeholder="Tiempo"
                  value={tiempo}
-                 onChange={(e) => setTiempo(e.target.value)}
-                 maxLength="3"
+                 onChange={(e) => {
+                   const valor = e.target.value;
+                   // Solo permitir números y máximo 2 dígitos
+                   if (/^\d{0,2}$/.test(valor)) {
+                     setTiempo(valor);
+                     // Si se completaron 2 dígitos, saltar al campo unidad
+                     if (valor.length === 2) {
+                       setTimeout(() => {
+                         if (unidadInputRef.current) {
+                           unidadInputRef.current.focus();
+                           console.log('🎯 Saltando automáticamente al campo unidad');
+                         }
+                       }, 50);
+                     }
+                   }
+                 }}
+                 maxLength="2"
                  style={{
                    padding: '12px 16px',
                    border: '2px solid #666',
@@ -2797,6 +3027,7 @@ function TaxiForm() {
                  }}
                />
                <input
+                  ref={unidadInputRef}
                   type="text"
                   placeholder="Unidad"
                   value={unidad}
@@ -3547,15 +3778,15 @@ function TaxiForm() {
                            value={editandoViaje === viaje.id ? baseEdit : ''}
                            onChange={(e) => {
                              const valor = e.target.value;
-                             // Solo permitir números
-                             if (/^\d*$/.test(valor)) {
+                             // Solo permitir 01, 02, 03 (máximo 2 dígitos)
+                             if (valor === '' || valor === '0' || valor === '01' || valor === '02' || valor === '03') {
                                if (editandoViaje !== viaje.id) {
                                  iniciarEdicionViaje(viaje);
                                }
                                setBaseEdit(valor);
                              }
                            }}
-                           maxLength="3"
+                           maxLength="2"
                            style={{
                              width: '80px',
                              padding: '4px 8px',
@@ -3582,12 +3813,16 @@ function TaxiForm() {
                          type="text"
                          value={editandoViaje === viaje.id ? tiempoEdit : ''}
                          onChange={(e) => {
-                           if (editandoViaje !== viaje.id) {
-                             iniciarEdicionViaje(viaje);
+                           const valor = e.target.value;
+                           // Solo permitir números y máximo 2 dígitos
+                           if (/^\d{0,2}$/.test(valor)) {
+                             if (editandoViaje !== viaje.id) {
+                               iniciarEdicionViaje(viaje);
+                             }
+                             setTiempoEdit(valor);
                            }
-                           setTiempoEdit(e.target.value);
                          }}
-                         maxLength="3"
+                         maxLength="2"
                          style={{
                            width: '60px',
                            padding: '4px 8px',
@@ -4493,143 +4728,202 @@ function TaxiForm() {
               flexDirection: 'column',
               gap: '10px'
             }}>
-              <button
-                onClick={cancelarPedidoPorCliente}
-                style={{
-                  padding: '12px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: '#dc2626',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#b91c1c';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#dc2626';
-                }}
-              >
-                ❌ Cancelar por Cliente
-              </button>
+              {/* Botones para pedidos en curso */}
+              {modalAccionesPedido.coleccion === 'pedidoEnCurso' && (
+                <>
+                  <button
+                    onClick={cancelarPedidoPorCliente}
+                    style={{
+                      padding: '12px 20px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      backgroundColor: '#dc2626',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#b91c1c';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#dc2626';
+                    }}
+                  >
+                    ❌ Cancelado por Cliente
+                  </button>
 
-              <button
-                onClick={() => cambiarEstadoPedido('Cancelado')}
-                style={{
-                  padding: '12px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: '#ef4444',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#dc2626';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#ef4444';
-                }}
-              >
-                🚫 Cancelar Pedido
-              </button>
+                  <button
+                    onClick={cancelarPedidoPorUnidad}
+                    style={{
+                      padding: '12px 20px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      backgroundColor: '#ef4444',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#dc2626';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#ef4444';
+                    }}
+                  >
+                    🚫 Cancelado por Unidad
+                  </button>
 
-              <button
-                onClick={() => cambiarEstadoPedido('Rechazado')}
-                style={{
-                  padding: '12px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: '#7c3aed',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#6d28d9';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#7c3aed';
-                }}
-              >
-                ❌ Rechazar Pedido
-              </button>
+                  <button
+                    onClick={generarVoucher}
+                    style={{
+                      padding: '12px 20px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      backgroundColor: '#7c3aed',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#6d28d9';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#7c3aed';
+                    }}
+                  >
+                    🎫 Generar Voucher
+                  </button>
 
-              <button
-                onClick={() => cambiarEstadoPedido('En Espera')}
-                style={{
-                  padding: '12px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: '#f59e0b',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#d97706';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#f59e0b';
-                }}
-              >
-                ⏳ Poner en Espera
-              </button>
+                  <button
+                    onClick={finalizarPedido}
+                    style={{
+                      padding: '12px 20px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      backgroundColor: '#10b981',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#059669';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#10b981';
+                    }}
+                  >
+                    🏁 Finalizar Pedido
+                  </button>
 
-              <button
-                onClick={() => cambiarEstadoPedido('Completado')}
-                style={{
-                  padding: '12px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: '#059669',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#047857';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#059669';
-                }}
-              >
-                ✅ Marcar como Completado
-              </button>
+                  {/* Botón Ver Ubicación - Solo para pedidos de aplicación */}
+                  {modalAccionesPedido.pedido?.tipopedido === 'Automático' && (
+                    <button
+                      onClick={verUbicacion}
+                      style={{
+                        padding: '12px 20px',
+                        border: 'none',
+                        borderRadius: '8px',
+                        backgroundColor: '#3b82f6',
+                        color: 'white',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer',
+                        transition: 'all 0.2s'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.target.style.backgroundColor = '#2563eb';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.target.style.backgroundColor = '#3b82f6';
+                      }}
+                    >
+                      📍 Ver Ubicación
+                    </button>
+                  )}
+                </>
+              )}
 
-              <button
-                onClick={finalizarPedido}
-                style={{
-                  padding: '12px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: '#10b981',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#059669';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#10b981';
-                }}
-              >
-                🏁 Finalizar Pedido
-              </button>
+              {/* Botones para pedidos disponibles */}
+              {modalAccionesPedido.coleccion === 'pedidosDisponibles' && (
+                <>
+                  <button
+                    onClick={cancelarPedidoSinAsignar}
+                    style={{
+                      padding: '12px 20px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      backgroundColor: '#dc2626',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#b91c1c';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#dc2626';
+                    }}
+                  >
+                    ❌ Cancelado por Cliente Sin Asignar
+                  </button>
+
+                  <button
+                    onClick={noHuboUnidadDisponible}
+                    style={{
+                      padding: '12px 20px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      backgroundColor: '#ef4444',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#dc2626';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#ef4444';
+                    }}
+                  >
+                    🚫 No Hubo Unidad Disponible
+                  </button>
+
+                  <button
+                    onClick={generarReserva}
+                    style={{
+                      padding: '12px 20px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      backgroundColor: '#7c3aed',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      e.target.style.backgroundColor = '#6d28d9';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.target.style.backgroundColor = '#7c3aed';
+                    }}
+                  >
+                    📅 Generar Reserva
+                  </button>
+                </>
+              )}
 
               <button
                 onClick={cerrarModalAccionesPedido}
