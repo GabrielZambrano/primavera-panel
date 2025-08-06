@@ -2232,12 +2232,18 @@ function TaxiForm() {
       // Guardar en Firestore
       await addDoc(collection(db, 'voucherCorporativos'), voucherData);
 
-      // Guardar en pedidoFinalizadoVoucher
+      // Guardar en todosLosViajes como viaje finalizado tipo voucher
       const fechaActual = new Date();
-      const voucherFinalizadoData = {
+      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const viajeVoucherFinalizadoData = {
         ...modalAccionesPedido.pedido,
-        estado: 'Voucher Finalizado',
-        pedido: 'Voucher Finalizado',
+        estado: 'Finalizado',
+        pedido: 'Voucher',
         fechaFinalizacion: fechaActual,
         fechaRegistroFinalizacion: fechaActual,
         motivoFinalizacion: 'Voucher corporativo generado',
@@ -2247,14 +2253,15 @@ function TaxiForm() {
         colorFondo: '#fef3c7'
       };
 
-      // Guardar en la colección pedidoFinalizadoVoucher
-      await addDoc(collection(db, 'pedidoFinalizadoVoucher'), voucherFinalizadoData);
+      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido?.id}`;
+      await setDoc(doc(db, rutaTodosLosViajes), viajeVoucherFinalizadoData);
 
       // Eliminar el pedido original de la colección pedidoEnCurso
       if (modalAccionesPedido.pedido?.id) {
         const pedidoRef = doc(db, 'pedidoEnCurso', modalAccionesPedido.pedido.id);
         await deleteDoc(pedidoRef);
-        console.log('✅ Pedido eliminado de pedidoEnCurso y guardado en pedidoFinalizadoVoucher');
+        console.log('✅ Pedido eliminado de pedidoEnCurso y guardado en todosLosViajes como voucher finalizado');
       }
 
       console.log('✅ Voucher guardado exitosamente con número:', numeroAutorizacion);
