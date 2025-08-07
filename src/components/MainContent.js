@@ -445,6 +445,7 @@ function TaxiForm() {
   // Estados para autenticación de operadores
   const [operadorAutenticado, setOperadorAutenticado] = useState(null);
   const [mostrarModalOperador, setMostrarModalOperador] = useState(true);
+  const [usuarioOperador, setUsuarioOperador] = useState('');
   const [codigoOperador, setCodigoOperador] = useState('');
   const [errorAutenticacion, setErrorAutenticacion] = useState('');
   const [cargandoAutenticacion, setCargandoAutenticacion] = useState(false);
@@ -460,6 +461,11 @@ function TaxiForm() {
 
   // Función para autenticar operador
   const autenticarOperador = async () => {
+    if (!usuarioOperador.trim()) {
+      setErrorAutenticacion('El usuario es obligatorio');
+      return;
+    }
+
     if (!codigoOperador || codigoOperador.length !== 4 || !/^\d{4}$/.test(codigoOperador)) {
       setErrorAutenticacion('El código debe tener exactamente 4 dígitos numéricos');
       return;
@@ -470,7 +476,10 @@ function TaxiForm() {
 
     try {
       const operadoresRef = collection(db, 'operadores');
-      const q = query(operadoresRef, where('codigo', '==', codigoOperador));
+      const q = query(operadoresRef, 
+        where('usuario', '==', usuarioOperador.trim()),
+        where('codigo', '==', codigoOperador)
+      );
       const snapshot = await getDocs(q);
 
       if (!snapshot.empty) {
@@ -478,6 +487,7 @@ function TaxiForm() {
         setOperadorAutenticado({
           id: snapshot.docs[0].id,
           nombre: operador.nombre,
+          usuario: operador.usuario,
           codigo: operador.codigo
         });
         setMostrarModalOperador(false);
@@ -486,7 +496,7 @@ function TaxiForm() {
         // Cargar reporte diario del operador
         await cargarReporteDiario(operador.nombre);
       } else {
-        setErrorAutenticacion('Código de operador incorrecto');
+        setErrorAutenticacion('Usuario o código incorrecto');
       }
     } catch (error) {
       console.error('❌ Error al autenticar operador:', error);
@@ -568,6 +578,7 @@ function TaxiForm() {
   const cerrarSesionOperador = () => {
     setOperadorAutenticado(null);
     setMostrarModalOperador(true);
+    setUsuarioOperador('');
     setCodigoOperador('');
     setErrorAutenticacion('');
     setReporteDiario({
@@ -3195,8 +3206,29 @@ function TaxiForm() {
             marginBottom: '25px',
             fontSize: '14px'
           }}>
-            Ingrese su código de operador de 4 dígitos para acceder al sistema
+            Ingrese su usuario y código de operador para acceder al sistema
           </p>
+
+          <input
+            type="text"
+            value={usuarioOperador}
+            onChange={(e) => setUsuarioOperador(e.target.value)}
+            placeholder="Usuario"
+            style={{
+              width: '100%',
+              padding: '12px 16px',
+              border: '2px solid #e5e7eb',
+              borderRadius: '8px',
+              fontSize: '16px',
+              marginBottom: '15px',
+              textAlign: 'center'
+            }}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                autenticarOperador();
+              }
+            }}
+          />
 
           <input
             type="password"
@@ -3308,6 +3340,13 @@ function TaxiForm() {
               }}>
                 👤 Operador: {operadorAutenticado.nombre}
               </h3>
+              <p style={{
+                margin: '0 0 3px 0',
+                color: '#6b7280',
+                fontSize: '14px'
+              }}>
+                👤 Usuario: {operadorAutenticado.usuario}
+              </p>
               <p style={{
                 margin: '0',
                 color: '#6b7280',
@@ -8249,6 +8288,389 @@ function ReportesContent() {
   );
 }
 
+function OperadoresContent() {
+  const [operadores, setOperadores] = useState([]);
+  const [cargandoOperadores, setCargandoOperadores] = useState(false);
+  const [mostrarFormulario, setMostrarFormulario] = useState(false);
+  const [nuevoOperador, setNuevoOperador] = useState({
+    nombre: '',
+    usuario: '',
+    codigo: ''
+  });
+  const [errorFormulario, setErrorFormulario] = useState('');
+
+  // Cargar operadores
+  const cargarOperadores = async () => {
+    setCargandoOperadores(true);
+    try {
+      const operadoresRef = collection(db, 'operadores');
+      const snapshot = await getDocs(operadoresRef);
+      const operadoresData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setOperadores(operadoresData);
+    } catch (error) {
+      console.error('❌ Error al cargar operadores:', error);
+    } finally {
+      setCargandoOperadores(false);
+    }
+  };
+
+  // Crear nuevo operador
+  const crearOperador = async () => {
+    if (!nuevoOperador.nombre.trim() || !nuevoOperador.usuario.trim() || !nuevoOperador.codigo.trim()) {
+      setErrorFormulario('Todos los campos son obligatorios');
+      return;
+    }
+
+    if (nuevoOperador.codigo.length !== 4 || !/^\d{4}$/.test(nuevoOperador.codigo)) {
+      setErrorFormulario('El código debe tener exactamente 4 dígitos numéricos');
+      return;
+    }
+
+    try {
+      // Verificar si el usuario ya existe
+      const operadoresRef = collection(db, 'operadores');
+      const q = query(operadoresRef, where('usuario', '==', nuevoOperador.usuario));
+      const snapshot = await getDocs(q);
+
+      if (!snapshot.empty) {
+        setErrorFormulario('El usuario ya existe');
+        return;
+      }
+
+      // Verificar si el código ya existe
+      const qCodigo = query(operadoresRef, where('codigo', '==', nuevoOperador.codigo));
+      const snapshotCodigo = await getDocs(qCodigo);
+
+      if (!snapshotCodigo.empty) {
+        setErrorFormulario('El código ya existe');
+        return;
+      }
+
+      // Crear el operador
+      await addDoc(collection(db, 'operadores'), {
+        nombre: nuevoOperador.nombre.trim(),
+        usuario: nuevoOperador.usuario.trim(),
+        codigo: nuevoOperador.codigo.trim(),
+        fechaCreacion: new Date(),
+        activo: true
+      });
+
+      setNuevoOperador({ nombre: '', usuario: '', codigo: '' });
+      setErrorFormulario('');
+      setMostrarFormulario(false);
+      cargarOperadores();
+      
+      alert('✅ Operador creado exitosamente');
+    } catch (error) {
+      console.error('❌ Error al crear operador:', error);
+      setErrorFormulario('Error al crear el operador');
+    }
+  };
+
+  // Eliminar operador
+  const eliminarOperador = async (operadorId) => {
+    if (confirm('¿Está seguro de que desea eliminar este operador?')) {
+      try {
+        await deleteDoc(doc(db, 'operadores', operadorId));
+        cargarOperadores();
+        alert('✅ Operador eliminado exitosamente');
+      } catch (error) {
+        console.error('❌ Error al eliminar operador:', error);
+        alert('❌ Error al eliminar el operador');
+      }
+    }
+  };
+
+  useEffect(() => {
+    cargarOperadores();
+  }, []);
+
+  return (
+    <div style={{
+      padding: '20px',
+      backgroundColor: '#f9fafb',
+      minHeight: '100vh'
+    }}>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: '20px'
+      }}>
+        <h2 style={{
+          color: '#1f2937',
+          fontSize: '24px',
+          fontWeight: 'bold',
+          margin: 0
+        }}>
+          👥 Gestión de Operadores
+        </h2>
+        <button
+          onClick={() => setMostrarFormulario(true)}
+          style={{
+            padding: '10px 20px',
+            backgroundColor: '#3b82f6',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            fontSize: '14px',
+            fontWeight: '600',
+            cursor: 'pointer'
+          }}
+          onMouseEnter={(e) => e.target.style.backgroundColor = '#2563eb'}
+          onMouseLeave={(e) => e.target.style.backgroundColor = '#3b82f6'}
+        >
+          ➕ Crear Operador
+        </button>
+      </div>
+
+      {/* Formulario para crear operador */}
+      {mostrarFormulario && (
+        <div style={{
+          backgroundColor: '#ffffff',
+          padding: '20px',
+          borderRadius: '8px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          marginBottom: '20px'
+        }}>
+          <h3 style={{
+            color: '#1f2937',
+            marginBottom: '15px',
+            fontSize: '18px',
+            fontWeight: 'bold'
+          }}>
+            📝 Crear Nuevo Operador
+          </h3>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{
+              display: 'block',
+              marginBottom: '5px',
+              color: '#374151',
+              fontWeight: '600'
+            }}>
+              Nombre Completo:
+            </label>
+            <input
+              type="text"
+              value={nuevoOperador.nombre}
+              onChange={(e) => setNuevoOperador({...nuevoOperador, nombre: e.target.value})}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                border: '2px solid #e5e7eb',
+                borderRadius: '6px',
+                fontSize: '14px'
+              }}
+              placeholder="Ingrese el nombre completo"
+            />
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{
+              display: 'block',
+              marginBottom: '5px',
+              color: '#374151',
+              fontWeight: '600'
+            }}>
+              Usuario:
+            </label>
+            <input
+              type="text"
+              value={nuevoOperador.usuario}
+              onChange={(e) => setNuevoOperador({...nuevoOperador, usuario: e.target.value})}
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                border: '2px solid #e5e7eb',
+                borderRadius: '6px',
+                fontSize: '14px'
+              }}
+              placeholder="Ingrese el nombre de usuario"
+            />
+          </div>
+
+          <div style={{ marginBottom: '15px' }}>
+            <label style={{
+              display: 'block',
+              marginBottom: '5px',
+              color: '#374151',
+              fontWeight: '600'
+            }}>
+              Código (4 dígitos):
+            </label>
+            <input
+              type="password"
+              value={nuevoOperador.codigo}
+              onChange={(e) => setNuevoOperador({...nuevoOperador, codigo: e.target.value})}
+              maxLength="4"
+              style={{
+                width: '100%',
+                padding: '10px 12px',
+                border: '2px solid #e5e7eb',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontFamily: 'monospace',
+                letterSpacing: '4px'
+              }}
+              placeholder="0000"
+            />
+          </div>
+
+          {errorFormulario && (
+            <div style={{
+              color: '#dc2626',
+              fontSize: '14px',
+              marginBottom: '15px',
+              padding: '10px',
+              backgroundColor: '#fef2f2',
+              borderRadius: '6px',
+              border: '1px solid #fecaca'
+            }}>
+              {errorFormulario}
+            </div>
+          )}
+
+          <div style={{
+            display: 'flex',
+            gap: '10px'
+          }}>
+            <button
+              onClick={crearOperador}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#10b981',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = '#059669'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = '#10b981'}
+            >
+              ✅ Crear Operador
+            </button>
+            <button
+              onClick={() => {
+                setMostrarFormulario(false);
+                setNuevoOperador({ nombre: '', usuario: '', codigo: '' });
+                setErrorFormulario('');
+              }}
+              style={{
+                padding: '10px 20px',
+                backgroundColor: '#6b7280',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                fontWeight: '600',
+                cursor: 'pointer'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = '#4b5563'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = '#6b7280'}
+            >
+              ❌ Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Lista de operadores */}
+      <div style={{
+        backgroundColor: '#ffffff',
+        padding: '20px',
+        borderRadius: '8px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+      }}>
+        <h3 style={{
+          color: '#1f2937',
+          marginBottom: '15px',
+          fontSize: '18px',
+          fontWeight: 'bold'
+        }}>
+          📋 Lista de Operadores ({operadores.length})
+        </h3>
+
+        {cargandoOperadores ? (
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <p style={{ color: '#6b7280' }}>Cargando operadores...</p>
+          </div>
+        ) : operadores.length === 0 ? (
+          <div style={{ textAlign: 'center', padding: '20px' }}>
+            <p style={{ color: '#6b7280' }}>No hay operadores registrados</p>
+          </div>
+        ) : (
+          <div style={{
+            display: 'grid',
+            gap: '15px'
+          }}>
+            {operadores.map((operador) => (
+              <div key={operador.id} style={{
+                border: '1px solid #e5e7eb',
+                borderRadius: '6px',
+                padding: '15px',
+                backgroundColor: '#f9fafb'
+              }}>
+                <div style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center'
+                }}>
+                  <div>
+                    <h4 style={{
+                      margin: '0 0 5px 0',
+                      color: '#1f2937',
+                      fontSize: '16px',
+                      fontWeight: 'bold'
+                    }}>
+                      {operador.nombre}
+                    </h4>
+                    <p style={{
+                      margin: '0 0 5px 0',
+                      color: '#6b7280',
+                      fontSize: '14px'
+                    }}>
+                      Usuario: {operador.usuario}
+                    </p>
+                    <p style={{
+                      margin: '0',
+                      color: '#6b7280',
+                      fontSize: '14px'
+                    }}>
+                      Código: {'•'.repeat(4)}
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => eliminarOperador(operador.id)}
+                    style={{
+                      padding: '5px 10px',
+                      backgroundColor: '#ef4444',
+                      color: 'white',
+                      border: 'none',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      cursor: 'pointer'
+                    }}
+                    onMouseEnter={(e) => e.target.style.backgroundColor = '#dc2626'}
+                    onMouseLeave={(e) => e.target.style.backgroundColor = '#ef4444'}
+                  >
+                    🗑️ Eliminar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function VouchersContent() {
   return (
     <div style={{ padding: 20 }}>
@@ -8268,6 +8690,8 @@ function MainContent({ activeSection }) {
         return <ConductoresContent />;
       case 'reportes':
         return <ReportesContent />;
+      case 'operadores':
+        return <OperadoresContent />;
       case 'vouchers':
         return <VouchersContent />;
       default:

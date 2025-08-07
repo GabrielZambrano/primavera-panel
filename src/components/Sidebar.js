@@ -5,6 +5,7 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed 
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
     { id: 'conductores', label: 'Conductores', icon: '👨‍💼' },
     { id: 'reportes', label: 'Reportes', icon: '📈' },
+    { id: 'operadores', label: 'Operadores', icon: '👥' },
     { id: 'vouchers', label: 'Vouchers', icon: '🧾' }
   ];
 
