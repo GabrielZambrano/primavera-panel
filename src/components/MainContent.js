@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Wrapper, Status } from "@googlemaps/react-wrapper";
-import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot, setDoc, orderBy, limit } from "firebase/firestore";
+import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot, setDoc, orderBy, limit, increment } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { db, storage } from "../firebaseConfig";
 // import axios from 'axios'; // Comentado porque no se usa
@@ -442,8 +442,143 @@ function MapaSelector({ onCoordinatesSelect, onAddressSelect, coordenadas, direc
 
 // Formulario principal de Taxi
 function TaxiForm() {
-  const [telefono, setTelefono] = useState('');
-  const [nombre, setNombre] = useState('');
+  // Estados para autenticación de operadores
+  const [operadorAutenticado, setOperadorAutenticado] = useState(null);
+  const [mostrarModalOperador, setMostrarModalOperador] = useState(true);
+  const [codigoOperador, setCodigoOperador] = useState('');
+  const [errorAutenticacion, setErrorAutenticacion] = useState('');
+  const [cargandoAutenticacion, setCargandoAutenticacion] = useState(false);
+
+  // Estados para reportes diarios
+  const [reporteDiario, setReporteDiario] = useState({
+    viajesRegistrados: 0,
+    viajesAsignados: 0,
+    viajesCancelados: 0,
+    viajesFinalizados: 0,
+    vouchersGenerados: 0
+  });
+
+  // Función para autenticar operador
+  const autenticarOperador = async () => {
+    if (!codigoOperador || codigoOperador.length !== 4 || !/^\d{4}$/.test(codigoOperador)) {
+      setErrorAutenticacion('El código debe tener exactamente 4 dígitos numéricos');
+      return;
+    }
+
+    setCargandoAutenticacion(true);
+    setErrorAutenticacion('');
+
+    try {
+      const operadoresRef = collection(db, 'operadores');
+      const q = query(operadoresRef, where('codigo', '==', codigoOperador));
+      const snapshot = await getDocs(q);
+
+      if (!snapshot.empty) {
+        const operador = snapshot.docs[0].data();
+        setOperadorAutenticado({
+          id: snapshot.docs[0].id,
+          nombre: operador.nombre,
+          codigo: operador.codigo
+        });
+        setMostrarModalOperador(false);
+        console.log('✅ Operador autenticado:', operador.nombre);
+        
+        // Cargar reporte diario del operador
+        await cargarReporteDiario(operador.nombre);
+      } else {
+        setErrorAutenticacion('Código de operador incorrecto');
+      }
+    } catch (error) {
+      console.error('❌ Error al autenticar operador:', error);
+      setErrorAutenticacion('Error al autenticar operador');
+    } finally {
+      setCargandoAutenticacion(false);
+    }
+  };
+
+  // Función para cargar reporte diario
+  const cargarReporteDiario = async (nombreOperador) => {
+    try {
+      const hoy = new Date();
+      const fechaHoy = hoy.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const reporteRef = doc(db, 'reportesDiarios', `${nombreOperador}_${fechaHoy}`);
+      const reporteDoc = await getDoc(reporteRef);
+
+      if (reporteDoc.exists()) {
+        setReporteDiario(reporteDoc.data());
+      } else {
+        // Crear reporte inicial si no existe
+        const reporteInicial = {
+          operador: nombreOperador,
+          fecha: fechaHoy,
+          viajesRegistrados: 0,
+          viajesAsignados: 0,
+          viajesCancelados: 0,
+          viajesFinalizados: 0,
+          vouchersGenerados: 0,
+          ultimaActualizacion: new Date()
+        };
+        await setDoc(reporteRef, reporteInicial);
+        setReporteDiario(reporteInicial);
+      }
+    } catch (error) {
+      console.error('❌ Error al cargar reporte diario:', error);
+    }
+  };
+
+  // Función para actualizar contador en reporte diario
+  const actualizarContadorReporte = async (tipoAccion) => {
+    if (!operadorAutenticado) return;
+
+    try {
+      const hoy = new Date();
+      const fechaHoy = hoy.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const reporteRef = doc(db, 'reportesDiarios', `${operadorAutenticado.nombre}_${fechaHoy}`);
+      
+      // Actualizar contador específico
+      const campoContador = tipoAccion;
+      await updateDoc(reporteRef, {
+        [campoContador]: increment(1),
+        ultimaActualizacion: new Date()
+      });
+
+      // Actualizar estado local
+      setReporteDiario(prev => ({
+        ...prev,
+        [campoContador]: prev[campoContador] + 1
+      }));
+
+      console.log(`📊 Contador actualizado: ${tipoAccion}`);
+    } catch (error) {
+      console.error('❌ Error al actualizar contador:', error);
+    }
+  };
+
+  // Función para cerrar sesión de operador
+  const cerrarSesionOperador = () => {
+    setOperadorAutenticado(null);
+    setMostrarModalOperador(true);
+    setCodigoOperador('');
+    setErrorAutenticacion('');
+    setReporteDiario({
+      viajesRegistrados: 0,
+      viajesAsignados: 0,
+      viajesCancelados: 0,
+      viajesFinalizados: 0,
+      vouchersGenerados: 0
+    });
+  };
+
   const [coordenadas, setCoordenadas] = useState('');
   const [direccion, setDireccion] = useState('');
   const [base, setBase] = useState('0');
@@ -1941,6 +2076,9 @@ function TaxiForm() {
        
        // Registro silencioso - sin mostrar alert de éxito
        console.log(`✅ Pedido registrado silenciosamente en "En Curso" - Conductor: ${conductorData.nombre}, Unidad: ${unidad}`);
+       
+       // Actualizar contador de viajes registrados
+       await actualizarContadorReporte('viajesRegistrados');
     } catch (error) {
       console.error('Error al registrar el viaje:', error);
       setModal({ open: true, success: false, message: 'Error al registrar el pedido en curso.' });
@@ -2005,6 +2143,10 @@ function TaxiForm() {
       await deleteDoc(pedidoRef);
 
       console.log('✅ Pedido cancelado por cliente, guardado en todosLosViajes y eliminado de la colección original');
+      
+      // Actualizar contador de viajes cancelados
+      await actualizarContadorReporte('viajesCancelados');
+      
       cerrarModalAccionesPedido();
     } catch (error) {
       console.error('❌ Error al cancelar pedido:', error);
@@ -2050,6 +2192,10 @@ function TaxiForm() {
       await deleteDoc(pedidoRef);
 
       console.log('✅ Pedido cancelado por unidad, guardado en todosLosViajes y eliminado de la colección original');
+      
+      // Actualizar contador de viajes cancelados
+      await actualizarContadorReporte('viajesCancelados');
+      
       cerrarModalAccionesPedido();
     } catch (error) {
       console.error('❌ Error al cancelar pedido por unidad:', error);
@@ -2202,6 +2348,8 @@ function TaxiForm() {
 
   // Función para guardar voucher
   const guardarVoucher = async () => {
+    if (!modalAccionesPedido.pedido) return;
+
     try {
       let numeroAutorizacion = 40000; // Número inicial
       
@@ -2229,10 +2377,10 @@ function TaxiForm() {
         estado: 'Activo'
       };
 
-      // Guardar en Firestore
+      // Guardar en voucherCorporativos
       await addDoc(collection(db, 'voucherCorporativos'), voucherData);
 
-      // Guardar en todosLosViajes como viaje finalizado tipo voucher
+      // Aplicar la misma lógica que finalizarPedido
       const fechaActual = new Date();
       const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
         day: '2-digit',
@@ -2240,6 +2388,9 @@ function TaxiForm() {
         year: 'numeric'
       }).replace(/\//g, '-');
 
+      const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+      
+      // Preparar datos del viaje finalizado tipo voucher
       const viajeVoucherFinalizadoData = {
         ...modalAccionesPedido.pedido,
         estado: 'Finalizado',
@@ -2250,28 +2401,28 @@ function TaxiForm() {
         numeroAutorizacionVoucher: numeroAutorizacion,
         voucherData: voucherData,
         esVoucher: true,
-        colorFondo: '#fef3c7'
+        colorFondo: '#fef3c7' // Color de fondo amarillo para vouchers
       };
 
       // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido?.id}`;
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
       await setDoc(doc(db, rutaTodosLosViajes), viajeVoucherFinalizadoData);
 
-      // Eliminar el pedido original de la colección pedidoEnCurso
-      if (modalAccionesPedido.pedido?.id) {
-        const pedidoRef = doc(db, 'pedidoEnCurso', modalAccionesPedido.pedido.id);
-        await deleteDoc(pedidoRef);
-        console.log('✅ Pedido eliminado de pedidoEnCurso y guardado en todosLosViajes como voucher finalizado');
-      }
+      // Eliminar el documento original de la colección
+      await deleteDoc(pedidoRef);
 
-      console.log('✅ Voucher guardado exitosamente con número:', numeroAutorizacion);
-      console.log('✅ Viaje guardado en todosLosViajes con estado Voucher');
+      console.log(`✅ Voucher generado y guardado en todosLosViajes: ${rutaTodosLosViajes}`);
+      console.log('✅ Voucher guardado en voucherCorporativos con número:', numeroAutorizacion);
+      
+      // Actualizar contador de vouchers generados
+      await actualizarContadorReporte('vouchersGenerados');
+      
       setModal({ open: true, success: true, message: `Voucher generado exitosamente. Número de autorización: ${numeroAutorizacion}` });
       
       cerrarModalVoucher();
     } catch (error) {
-      console.error('❌ Error al guardar voucher:', error);
-      setModal({ open: true, success: false, message: 'Error al guardar el voucher.' });
+      console.error('❌ Error al generar voucher:', error);
+      setModal({ open: true, success: false, message: 'Error al generar el voucher.' });
     }
   };
 
@@ -2337,6 +2488,10 @@ function TaxiForm() {
       await deleteDoc(pedidoRef);
 
       console.log('✅ Pedido cancelado sin asignar, guardado en todosLosViajes y eliminado de la colección original');
+      
+      // Actualizar contador de viajes cancelados
+      await actualizarContadorReporte('viajesCancelados');
+      
       cerrarModalAccionesPedido();
     } catch (error) {
       console.error('❌ Error al cancelar pedido sin asignar:', error);
@@ -2381,6 +2536,10 @@ function TaxiForm() {
       await deleteDoc(pedidoRef);
 
       console.log('✅ Pedido marcado como no hubo unidad disponible, guardado en todosLosViajes y eliminado de la colección original');
+      
+      // Actualizar contador de viajes cancelados
+      await actualizarContadorReporte('viajesCancelados');
+      
       cerrarModalAccionesPedido();
     } catch (error) {
       console.error('❌ Error al marcar como no hubo unidad disponible:', error);
@@ -2489,6 +2648,10 @@ function TaxiForm() {
       await deleteDoc(pedidoRef);
 
       console.log(`✅ Pedido finalizado y guardado en todosLosViajes: ${rutaTodosLosViajes}`);
+      
+      // Actualizar contador de viajes finalizados
+      await actualizarContadorReporte('viajesFinalizados');
+      
       setModal({ open: true, success: true, message: 'Pedido finalizado exitosamente.' });
       
       cerrarModalAccionesPedido();
@@ -2643,6 +2806,9 @@ function TaxiForm() {
        
        // Registro silencioso - sin mostrar alert de éxito
        console.log(`✅ Pedido movido silenciosamente a "En Curso" - Conductor: ${conductorData.nombre}, Unidad: ${unidadEdit}`);
+       
+       // Actualizar contador de viajes asignados
+       await actualizarContadorReporte('viajesAsignados');
      } catch (error) {
        console.error('Error al mover el pedido:', error);
        setModal({ open: true, success: false, message: 'Error al mover el pedido a "En Curso".' });
@@ -2991,6 +3157,118 @@ function TaxiForm() {
   };
 
 
+  // Modal de autenticación de operador
+  if (mostrarModalOperador) {
+    return (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        backgroundColor: 'rgba(0, 0, 0, 0.5)',
+        display: 'flex',
+        justifyContent: 'center',
+        alignItems: 'center',
+        zIndex: 1000
+      }}>
+        <div style={{
+          backgroundColor: 'white',
+          padding: '30px',
+          borderRadius: '12px',
+          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+          maxWidth: '400px',
+          width: '100%',
+          textAlign: 'center'
+        }}>
+          <h2 style={{
+            color: '#1f2937',
+            marginBottom: '20px',
+            fontSize: '24px',
+            fontWeight: 'bold'
+          }}>
+            🔐 Autenticación de Operador
+          </h2>
+          
+          <p style={{
+            color: '#6b7280',
+            marginBottom: '25px',
+            fontSize: '14px'
+          }}>
+            Ingrese su código de operador de 4 dígitos para acceder al sistema
+          </p>
+
+          <input
+            type="password"
+            value={codigoOperador}
+            onChange={(e) => setCodigoOperador(e.target.value)}
+            placeholder="Código de 4 dígitos"
+            maxLength="4"
+            style={{
+              width: '100%',
+              padding: '12px 16px',
+              border: '2px solid #e5e7eb',
+              borderRadius: '8px',
+              fontSize: '16px',
+              marginBottom: '15px',
+              textAlign: 'center',
+              letterSpacing: '8px',
+              fontFamily: 'monospace'
+            }}
+            onKeyPress={(e) => {
+              if (e.key === 'Enter') {
+                autenticarOperador();
+              }
+            }}
+          />
+
+          {errorAutenticacion && (
+            <div style={{
+              color: '#dc2626',
+              fontSize: '14px',
+              marginBottom: '15px',
+              padding: '10px',
+              backgroundColor: '#fef2f2',
+              borderRadius: '6px',
+              border: '1px solid #fecaca'
+            }}>
+              {errorAutenticacion}
+            </div>
+          )}
+
+          <button
+            onClick={autenticarOperador}
+            disabled={cargandoAutenticacion}
+            style={{
+              width: '100%',
+              padding: '12px 20px',
+              backgroundColor: cargandoAutenticacion ? '#9ca3af' : '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: '600',
+              cursor: cargandoAutenticacion ? 'not-allowed' : 'pointer',
+              transition: 'background-color 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              if (!cargandoAutenticacion) {
+                e.target.style.backgroundColor = '#2563eb';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (!cargandoAutenticacion) {
+                e.target.style.backgroundColor = '#3b82f6';
+              }
+            }}
+          >
+            {cargandoAutenticacion ? '🔐 Autenticando...' : '🔐 Ingresar'}
+          </button>
+        </div>
+      </div>
+    );
+  }
+
      return (
      <div style={{
        background: '#f3f4f6',
@@ -3004,6 +3282,143 @@ function TaxiForm() {
        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
        boxSizing: 'border-box'
      }}>
+      
+      {/* Panel de información del operador y reportes diarios */}
+      {operadorAutenticado && (
+        <div style={{
+          backgroundColor: '#ffffff',
+          padding: '15px',
+          borderRadius: '8px',
+          marginBottom: '20px',
+          border: '1px solid #e5e7eb',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
+        }}>
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            marginBottom: '15px'
+          }}>
+            <div>
+              <h3 style={{
+                margin: '0 0 5px 0',
+                color: '#1f2937',
+                fontSize: '18px',
+                fontWeight: 'bold'
+              }}>
+                👤 Operador: {operadorAutenticado.nombre}
+              </h3>
+              <p style={{
+                margin: '0',
+                color: '#6b7280',
+                fontSize: '14px'
+              }}>
+                📊 Reporte Diario - {new Date().toLocaleDateString('es-EC')}
+              </p>
+            </div>
+            <button
+              onClick={cerrarSesionOperador}
+              style={{
+                padding: '8px 16px',
+                backgroundColor: '#ef4444',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                fontSize: '14px',
+                cursor: 'pointer',
+                fontWeight: '600'
+              }}
+              onMouseEnter={(e) => e.target.style.backgroundColor = '#dc2626'}
+              onMouseLeave={(e) => e.target.style.backgroundColor = '#ef4444'}
+            >
+              🚪 Cerrar Sesión
+            </button>
+          </div>
+
+          {/* Contadores de reporte diario */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
+            gap: '10px'
+          }}>
+            <div style={{
+              backgroundColor: '#dbeafe',
+              padding: '10px',
+              borderRadius: '6px',
+              textAlign: 'center',
+              border: '1px solid #bfdbfe'
+            }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1e40af' }}>
+                {reporteDiario.viajesRegistrados}
+              </div>
+              <div style={{ fontSize: '12px', color: '#374151' }}>
+                🚗 Viajes Registrados
+              </div>
+            </div>
+
+            <div style={{
+              backgroundColor: '#d1fae5',
+              padding: '10px',
+              borderRadius: '6px',
+              textAlign: 'center',
+              border: '1px solid #a7f3d0'
+            }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#065f46' }}>
+                {reporteDiario.viajesAsignados}
+              </div>
+              <div style={{ fontSize: '12px', color: '#374151' }}>
+                ✅ Viajes Asignados
+              </div>
+            </div>
+
+            <div style={{
+              backgroundColor: '#fef3c7',
+              padding: '10px',
+              borderRadius: '6px',
+              textAlign: 'center',
+              border: '1px solid #fde68a'
+            }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#92400e' }}>
+                {reporteDiario.viajesFinalizados}
+              </div>
+              <div style={{ fontSize: '12px', color: '#374151' }}>
+                🏁 Viajes Finalizados
+              </div>
+            </div>
+
+            <div style={{
+              backgroundColor: '#fee2e2',
+              padding: '10px',
+              borderRadius: '6px',
+              textAlign: 'center',
+              border: '1px solid #fecaca'
+            }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#991b1b' }}>
+                {reporteDiario.viajesCancelados}
+              </div>
+              <div style={{ fontSize: '12px', color: '#374151' }}>
+                ❌ Viajes Cancelados
+              </div>
+            </div>
+
+            <div style={{
+              backgroundColor: '#f3e8ff',
+              padding: '10px',
+              borderRadius: '6px',
+              textAlign: 'center',
+              border: '1px solid #e9d5ff'
+            }}>
+              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#7c3aed' }}>
+                {reporteDiario.vouchersGenerados}
+              </div>
+              <div style={{ fontSize: '12px', color: '#374151' }}>
+                🎫 Vouchers Generados
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       <form onSubmit={handleSubmit}>
         <div style={{ 
           display: 'flex', 
@@ -6739,8 +7154,30 @@ function ReportesContent() {
   const [viajes, setViajes] = useState([]);
   const [fechaInicio, setFechaInicio] = useState('');
   const [fechaFin, setFechaFin] = useState('');
+  const [horaInicio, setHoraInicio] = useState('00:00');
+  const [horaFin, setHoraFin] = useState('23:59');
   const [cargando, setCargando] = useState(false);
   const [error, setError] = useState('');
+  const [resumenEstados, setResumenEstados] = useState({});
+  const [resumenTipos, setResumenTipos] = useState({});
+
+  // Inicializar fechas por defecto al cargar el componente
+  useEffect(() => {
+    const hoy = new Date();
+    const dia = String(hoy.getDate()).padStart(2, '0');
+    const mes = String(hoy.getMonth() + 1).padStart(2, '0');
+    const año = hoy.getFullYear();
+    const fechaHoy = `${dia}-${mes}-${año}`;
+    
+    if (!fechaInicio && !fechaFin) {
+      setFechaInicio(fechaHoy);
+      setFechaFin(fechaHoy);
+      // Cargar datos automáticamente después de un breve delay
+      setTimeout(() => {
+        cargarViajesPorRango(fechaHoy, fechaHoy);
+      }, 100);
+    }
+  }, [fechaInicio, fechaFin]);
 
   // Función para obtener la fecha actual en formato DD-MM-YYYY
   const obtenerFechaActual = () => {
@@ -6751,13 +7188,33 @@ function ReportesContent() {
     return `${dia}-${mes}-${año}`;
   };
 
+  // Función para calcular resumen de estados
+  const calcularResumenEstados = (viajes) => {
+    const resumen = {};
+    viajes.forEach(viaje => {
+      const estado = viaje.estado || viaje.pedido || 'Sin Estado';
+      resumen[estado] = (resumen[estado] || 0) + 1;
+    });
+    return resumen;
+  };
+
+  // Función para calcular resumen de tipos de viaje
+  const calcularResumenTipos = (viajes) => {
+    const resumen = {};
+    viajes.forEach(viaje => {
+      const tipo = viaje.tipopedido || viaje.tipoViaje || 'Sin Tipo';
+      resumen[tipo] = (resumen[tipo] || 0) + 1;
+    });
+    return resumen;
+  };
+
   // Función para cargar viajes por rango de fechas
   const cargarViajesPorRango = async (fechaInicio, fechaFin) => {
     setCargando(true);
     setError('');
     
     try {
-      console.log('📊 Cargando viajes desde:', fechaInicio, 'hasta:', fechaFin);
+      console.log('📊 Cargando viajes desde:', fechaInicio, 'hasta:', fechaFin, 'hora inicio:', horaInicio, 'hora fin:', horaFin);
       
       const todosLosViajes = [];
       
@@ -6773,13 +7230,33 @@ function ReportesContent() {
           const viajesSnapshot = await getDocs(viajesRef);
           
           viajesSnapshot.forEach((doc) => {
-            const viaje = {
-              id: doc.id,
-              fecha: formatearFechaParaReporte(fecha),
-              ...doc.data()
-            };
-            todosLosViajes.push(viaje);
-            console.log('📄 Viaje encontrado:', doc.id, viaje.nombreCliente || viaje.nombre);
+            const viajeData = doc.data();
+            
+            // Verificar si el viaje está dentro del rango de horas
+            if (viajeData.fecha) {
+              const fechaViaje = viajeData.fecha.toDate ? viajeData.fecha.toDate() : new Date(viajeData.fecha);
+              const horaViaje = fechaViaje.getHours().toString().padStart(2, '0') + ':' + fechaViaje.getMinutes().toString().padStart(2, '0');
+              
+              // Solo incluir si está dentro del rango de horas
+              if (horaViaje >= horaInicio && horaViaje <= horaFin) {
+                const viaje = {
+                  id: doc.id,
+                  fecha: formatearFechaParaReporte(fecha),
+                  ...viajeData
+                };
+                todosLosViajes.push(viaje);
+                console.log('📄 Viaje encontrado:', doc.id, viaje.nombreCliente || viaje.nombre, 'hora:', horaViaje);
+              }
+            } else {
+              // Si no tiene fecha, incluir de todas formas
+              const viaje = {
+                id: doc.id,
+                fecha: formatearFechaParaReporte(fecha),
+                ...viajeData
+              };
+              todosLosViajes.push(viaje);
+              console.log('📄 Viaje encontrado (sin fecha):', doc.id, viaje.nombreCliente || viaje.nombre);
+            }
           });
         } catch (error) {
           console.log(`⚠️ No se encontraron viajes para ${fecha}:`, error.message);
@@ -6808,14 +7285,28 @@ function ReportesContent() {
               const fechaViaje = viaje.fecha ? new Date(viaje.fecha.toDate ? viaje.fecha.toDate() : viaje.fecha) : null;
               
               if (fechaViaje) {
-                const fechaFormateada = formatearFechaParaReporte(fechaViaje);
-                const viajeFormateado = {
-                  id: doc.id,
-                  fecha: fechaFormateada,
-                  ...viaje
-                };
-                todosLosViajes.push(viajeFormateado);
-                console.log('📄 Viaje disponible encontrado:', doc.id, viaje.nombreCliente || viaje.nombre);
+                // Verificar si está dentro del rango de fechas
+                const fechaViajeFormateada = fechaViaje.toLocaleDateString('es-EC', {
+                  day: '2-digit',
+                  month: '2-digit',
+                  year: 'numeric'
+                }).replace(/\//g, '-');
+                
+                if (fechaViajeFormateada >= fechaInicio && fechaViajeFormateada <= fechaFin) {
+                  // Verificar si está dentro del rango de horas
+                  const horaViaje = fechaViaje.getHours().toString().padStart(2, '0') + ':' + fechaViaje.getMinutes().toString().padStart(2, '0');
+                  
+                  if (horaViaje >= horaInicio && horaViaje <= horaFin) {
+                    const fechaFormateada = formatearFechaParaReporte(fechaViaje);
+                    const viajeFormateado = {
+                      id: doc.id,
+                      fecha: fechaFormateada,
+                      ...viaje
+                    };
+                    todosLosViajes.push(viajeFormateado);
+                    console.log('📄 Viaje disponible encontrado:', doc.id, viaje.nombreCliente || viaje.nombre, 'hora:', horaViaje);
+                  }
+                }
               }
             });
           } catch (error) {
@@ -6828,14 +7319,28 @@ function ReportesContent() {
             const fechaViaje = viaje.fecha ? new Date(viaje.fecha.toDate ? viaje.fecha.toDate() : viaje.fecha) : null;
             
             if (fechaViaje) {
-              const fechaFormateada = formatearFechaParaReporte(fechaViaje);
-              const viajeFormateado = {
-                id: doc.id,
-                fecha: fechaFormateada,
-                ...viaje
-              };
-              todosLosViajes.push(viajeFormateado);
-              console.log('📄 Viaje en curso encontrado:', doc.id, viaje.nombreCliente || viaje.nombre);
+              // Verificar si está dentro del rango de fechas
+              const fechaViajeFormateada = fechaViaje.toLocaleDateString('es-EC', {
+                day: '2-digit',
+                month: '2-digit',
+                year: 'numeric'
+              }).replace(/\//g, '-');
+              
+              if (fechaViajeFormateada >= fechaInicio && fechaViajeFormateada <= fechaFin) {
+                // Verificar si está dentro del rango de horas
+                const horaViaje = fechaViaje.getHours().toString().padStart(2, '0') + ':' + fechaViaje.getMinutes().toString().padStart(2, '0');
+                
+                if (horaViaje >= horaInicio && horaViaje <= horaFin) {
+                  const fechaFormateada = formatearFechaParaReporte(fechaViaje);
+                  const viajeFormateado = {
+                    id: doc.id,
+                    fecha: fechaFormateada,
+                    ...viaje
+                  };
+                  todosLosViajes.push(viajeFormateado);
+                  console.log('📄 Viaje en curso encontrado:', doc.id, viaje.nombreCliente || viaje.nombre, 'hora:', horaViaje);
+                }
+              }
             }
           });
         } else {
@@ -6908,6 +7413,15 @@ function ReportesContent() {
       
       console.log(`✅ Se encontraron ${todosLosViajes.length} viajes en total`);
       setViajes(todosLosViajes);
+      
+      // Calcular resúmenes
+      const resumenEstadosCalculado = calcularResumenEstados(todosLosViajes);
+      const resumenTiposCalculado = calcularResumenTipos(todosLosViajes);
+      setResumenEstados(resumenEstadosCalculado);
+      setResumenTipos(resumenTiposCalculado);
+      
+      console.log('📊 Resumen de estados:', resumenEstadosCalculado);
+      console.log('📊 Resumen de tipos:', resumenTiposCalculado);
       
     } catch (error) {
       console.error('❌ Error al cargar viajes:', error);
@@ -6983,10 +7497,20 @@ function ReportesContent() {
     }
   };
 
+  // Función para manejar cambio de hora inicio
+  const handleHoraInicioChange = (e) => {
+    setHoraInicio(e.target.value);
+  };
+
+  // Función para manejar cambio de hora fin
+  const handleHoraFinChange = (e) => {
+    setHoraFin(e.target.value);
+  };
+
   // Función para aplicar filtros
   const aplicarFiltros = () => {
     if (fechaInicio && fechaFin) {
-      console.log('🔍 Aplicando filtros:', { fechaInicio, fechaFin });
+      console.log('🔍 Aplicando filtros:', { fechaInicio, fechaFin, horaInicio, horaFin });
       cargarViajesPorRango(fechaInicio, fechaFin);
     } else {
       console.warn('⚠️ Fechas no válidas para filtrar:', { fechaInicio, fechaFin });
@@ -7201,7 +7725,7 @@ function ReportesContent() {
           Visualiza todos los viajes por rango de fechas. Selecciona fechas de inicio y fin para filtrar los registros.
         </p>
         
-        {/* Filtros de fecha */}
+        {/* Filtros de fecha y hora */}
         <div style={{ 
           display: 'flex', 
           alignItems: 'center', 
@@ -7230,6 +7754,19 @@ function ReportesContent() {
                 color: '#374151'
               }}
             />
+            <input
+              type="time"
+              value={horaInicio}
+              onChange={handleHoraInicioChange}
+              style={{
+                padding: '10px 15px',
+                border: '2px solid #d1d5db',
+                borderRadius: '8px',
+                fontSize: '16px',
+                backgroundColor: 'white',
+                color: '#374151'
+              }}
+            />
           </div>
           
           <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -7244,6 +7781,19 @@ function ReportesContent() {
               type="date"
               value={fechaFin ? fechaFin.split('-').reverse().join('-') : ''}
               onChange={handleFechaFinChange}
+              style={{
+                padding: '10px 15px',
+                border: '2px solid #d1d5db',
+                borderRadius: '8px',
+                fontSize: '16px',
+                backgroundColor: 'white',
+                color: '#374151'
+              }}
+            />
+            <input
+              type="time"
+              value={horaFin}
+              onChange={handleHoraFinChange}
               style={{
                 padding: '10px 15px',
                 border: '2px solid #d1d5db',
@@ -7279,11 +7829,130 @@ function ReportesContent() {
               color: '#6b7280',
               fontSize: '14px'
             }}>
-              Mostrando viajes del {formatearFechaMostrar(fechaInicio)} al {formatearFechaMostrar(fechaFin)}
+              Mostrando viajes del {formatearFechaMostrar(fechaInicio)} {horaInicio} al {formatearFechaMostrar(fechaFin)} {horaFin}
+              {viajes.length > 0 && ` • ${viajes.length} viajes encontrados`}
             </span>
           )}
         </div>
       </div>
+
+      {/* Resumen de estados y tipos */}
+      {!cargando && !error && viajes.length > 0 && (
+        <div style={{
+          display: 'flex',
+          gap: '20px',
+          marginBottom: '20px',
+          flexWrap: 'wrap'
+        }}>
+          {/* Resumen de Estados */}
+          <div style={{
+            background: 'white',
+            borderRadius: '12px',
+            border: '1px solid #e5e7eb',
+            padding: '20px',
+            flex: '1',
+            minWidth: '300px',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+          }}>
+            <h4 style={{
+              margin: '0 0 15px 0',
+              color: '#1f2937',
+              fontSize: '18px',
+              fontWeight: 'bold'
+            }}>
+              📊 Resumen por Estado
+            </h4>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              {Object.entries(resumenEstados).map(([estado, cantidad]) => (
+                <div key={estado} style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '8px 12px',
+                  background: '#f8fafc',
+                  borderRadius: '6px',
+                  border: '1px solid #e2e8f0'
+                }}>
+                  <span style={{
+                    fontWeight: '500',
+                    color: '#374151'
+                  }}>
+                    {estado}
+                  </span>
+                  <span style={{
+                    background: '#3b82f6',
+                    color: 'white',
+                    padding: '4px 8px',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    fontWeight: 'bold'
+                  }}>
+                    {cantidad}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Resumen de Tipos de Viaje */}
+          <div style={{
+            background: 'white',
+            borderRadius: '12px',
+            border: '1px solid #e5e7eb',
+            padding: '20px',
+            flex: '1',
+            minWidth: '300px',
+            boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+          }}>
+            <h4 style={{
+              margin: '0 0 15px 0',
+              color: '#1f2937',
+              fontSize: '18px',
+              fontWeight: 'bold'
+            }}>
+              🚗 Resumen por Tipo de Viaje
+            </h4>
+            <div style={{
+              display: 'flex',
+              flexDirection: 'column',
+              gap: '8px'
+            }}>
+              {Object.entries(resumenTipos).map(([tipo, cantidad]) => (
+                <div key={tipo} style={{
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  padding: '8px 12px',
+                  background: '#f8fafc',
+                  borderRadius: '6px',
+                  border: '1px solid #e2e8f0'
+                }}>
+                  <span style={{
+                    fontWeight: '500',
+                    color: '#374151'
+                  }}>
+                    {tipo}
+                  </span>
+                  <span style={{
+                    background: '#10b981',
+                    color: 'white',
+                    padding: '4px 8px',
+                    borderRadius: '12px',
+                    fontSize: '12px',
+                    fontWeight: 'bold'
+                  }}>
+                    {cantidad}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Estado de carga */}
       {cargando && (
