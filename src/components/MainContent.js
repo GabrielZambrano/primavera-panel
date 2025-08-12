@@ -3,12 +3,14 @@ import { Wrapper, Status } from "@googlemaps/react-wrapper";
 import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot, setDoc, orderBy, limit, increment } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { db, storage } from "../firebaseConfig";
+import * as XLSX from 'xlsx';
+
 // import axios from 'axios'; // Comentado porque no se usa
 
 /**
  * Funcionalidad de tokens de conductores:
  * - Cuando se asigna manualmente una unidad/conductor, se incluye el token FCM del conductor
- * - El token se obtiene de los campos: token, fcmToken, o deviceToken del documento del conductor
+ * - El token se obtiene de los campos: tokenFCM, tokenConductor, etc.
  * - Se valida que el token tenga al menos 100 caracteres para considerarlo válido
  * - Se muestra un indicador visual en la gestión de conductores
  * - Los mensajes de confirmación incluyen el estado del token
@@ -32,145 +34,112 @@ function GoogleMapComponent({ onCoordinatesSelect, onAddressSelect, coordenadas,
   const [geocoder, setGeocoder] = useState(null);
   const autocompleteInputRef = useRef(null);
 
-  // Callbacks memoizados para evitar recreación en cada render
   const handleCoordinatesSelect = useCallback((coords) => {
-    onCoordinatesSelect(coords);
+    if (onCoordinatesSelect) onCoordinatesSelect(coords);
   }, [onCoordinatesSelect]);
 
   const handleAddressSelect = useCallback((address) => {
-    onAddressSelect(address);
+    if (onAddressSelect) onAddressSelect(address);
   }, [onAddressSelect]);
 
+  // Inicializar mapa y geocoder
   useEffect(() => {
     if (mapRef.current && !map && window.google && window.google.maps) {
       const newMap = new window.google.maps.Map(mapRef.current, {
-        center: center || { lat: -0.2298500, lng: -78.5249500 }, // Quito por defecto
+        center: center || { lat: -0.22985, lng: -78.52495 },
         zoom: 13,
         mapTypeControl: true,
         streetViewControl: true,
         fullscreenControl: true,
       });
-
       setMap(newMap);
+      setGeocoder(new window.google.maps.Geocoder());
 
-      // Inicializar Geocoder
-      const newGeocoder = new window.google.maps.Geocoder();
-      setGeocoder(newGeocoder);
-
-      // Agregar listener para clics en el mapa
-      newMap.addListener("click", (event) => {
+      newMap.addListener('click', (event) => {
         const lat = event.latLng.lat();
         const lng = event.latLng.lng();
         const nuevasCoordenadas = `${lat.toFixed(6)},${lng.toFixed(6)}`;
         handleCoordinatesSelect(nuevasCoordenadas);
-
-        // Hacer geocoding reverso para obtener la dirección
-        newGeocoder.geocode(
-          { location: { lat, lng } },
-          (results, status) => {
-            if (status === "OK" && results[0]) {
+        if (geocoder) {
+          geocoder.geocode({ location: { lat, lng } }, (results, status) => {
+            if (status === 'OK' && results[0]) {
               const address = results[0].formatted_address;
               handleAddressSelect(address);
               if (autocompleteInputRef.current) {
                 autocompleteInputRef.current.value = address;
               }
             }
-          }
-        );
+          });
+        }
       });
     }
-  }, [center, handleCoordinatesSelect, handleAddressSelect]); // Dependencias estables
+  }, [map, center, geocoder, handleCoordinatesSelect, handleAddressSelect]);
 
   // Inicializar Autocomplete
   useEffect(() => {
-    if (map && autocompleteInputRef.current && !autocomplete && 
-        window.google && window.google.maps && window.google.maps.places) {
-      
-      const newAutocomplete = new window.google.maps.places.Autocomplete(
-        autocompleteInputRef.current,
-        {
-          types: ['address'],
-          componentRestrictions: { country: ['ec', 'ni'] }, // Restringir a Ecuador y Nicaragua
-          fields: ['formatted_address', 'geometry', 'name']
-        }
-      );
-
+    if (map && autocompleteInputRef.current && !autocomplete && window.google?.maps?.places) {
+      const newAutocomplete = new window.google.maps.places.Autocomplete(autocompleteInputRef.current, {
+        types: ['address'],
+        componentRestrictions: { country: ['ec', 'ni'] },
+        fields: ['formatted_address', 'geometry', 'name']
+      });
       newAutocomplete.addListener('place_changed', () => {
         const place = newAutocomplete.getPlace();
-        
         if (place.geometry && place.geometry.location) {
           const lat = place.geometry.location.lat();
           const lng = place.geometry.location.lng();
           const nuevasCoordenadas = `${lat.toFixed(6)},${lng.toFixed(6)}`;
           const address = place.formatted_address || place.name;
-          
           handleCoordinatesSelect(nuevasCoordenadas);
           handleAddressSelect(address);
-          
-          // Centrar el mapa en la nueva ubicación
           map.setCenter({ lat, lng });
           map.setZoom(15);
         }
       });
-
       setAutocomplete(newAutocomplete);
     }
-  }, [map, handleCoordinatesSelect, handleAddressSelect]); // Dependencias estables
+  }, [map, autocomplete, handleCoordinatesSelect, handleAddressSelect]);
 
-  // Actualizar marcador cuando cambien las coordenadas (con debounce)
+  // Actualizar marcador cuando cambian coordenadas
   useEffect(() => {
-    if (map && coordenadas && geocoder) {
-      const [lat, lng] = coordenadas.split(',').map(Number);
-      
+    if (map && coordenadas) {
+      const [lat, lng] = (coordenadas || '').split(',').map(Number);
       if (!isNaN(lat) && !isNaN(lng)) {
-        const position = { lat, lng };
-
-        // Remover marcador anterior si existe
-        if (marker) {
-          marker.setMap(null);
-        }
-
-        // Crear nuevo marcador
+        const pos = { lat, lng };
+        if (marker) marker.setMap(null);
         const newMarker = new window.google.maps.Marker({
-          position,
+          position: pos,
           map,
-          title: "Ubicación seleccionada",
+          title: 'Ubicación seleccionada',
           animation: window.google.maps.Animation.DROP,
-          draggable: true, // Hacer el marcador arrastrable
+          draggable: true,
         });
-
-        // Listener para cuando se arrastra el marcador
         newMarker.addListener('dragend', (event) => {
           const dragLat = event.latLng.lat();
           const dragLng = event.latLng.lng();
           const nuevasCoordenadas = `${dragLat.toFixed(6)},${dragLng.toFixed(6)}`;
           handleCoordinatesSelect(nuevasCoordenadas);
-
-          // Hacer geocoding reverso para obtener la dirección
-          geocoder.geocode(
-            { location: { lat: dragLat, lng: dragLng } },
-            (results, status) => {
-              if (status === "OK" && results[0]) {
+          if (geocoder) {
+            geocoder.geocode({ location: { lat: dragLat, lng: dragLng } }, (results, status) => {
+              if (status === 'OK' && results[0]) {
                 const address = results[0].formatted_address;
                 handleAddressSelect(address);
                 if (autocompleteInputRef.current) {
                   autocompleteInputRef.current.value = address;
                 }
               }
-            }
-          );
+            });
+          }
         });
-
         setMarker(newMarker);
-        map.setCenter(position);
+        map.setCenter(pos);
       }
     }
-  }, [map, coordenadas, geocoder, handleCoordinatesSelect, handleAddressSelect]); // Dependencias controladas
+  }, [map, coordenadas, marker, geocoder, handleCoordinatesSelect, handleAddressSelect]);
 
-  // Sincronizar el input de búsqueda con la dirección del formulario (solo si es diferente)
+  // Sincronizar input de búsqueda con la dirección del formulario
   useEffect(() => {
-    if (autocompleteInputRef.current && direccionFormulario && 
-        autocompleteInputRef.current.value !== direccionFormulario) {
+    if (autocompleteInputRef.current && direccionFormulario && autocompleteInputRef.current.value !== direccionFormulario) {
       autocompleteInputRef.current.value = direccionFormulario;
     }
   }, [direccionFormulario]);
@@ -178,162 +147,79 @@ function GoogleMapComponent({ onCoordinatesSelect, onAddressSelect, coordenadas,
   const handleBuscarDireccion = () => {
     const address = autocompleteInputRef.current?.value;
     if (!address || !geocoder) return;
-
     geocoder.geocode({ address }, (results, status) => {
-      
-      if (status === "OK" && results[0]) {
+      if (status === 'OK' && results[0]) {
         const location = results[0].geometry.location;
         const lat = location.lat();
         const lng = location.lng();
         const nuevasCoordenadas = `${lat.toFixed(6)},${lng.toFixed(6)}`;
-        const formattedAddress = results[0].formatted_address;
-        
         handleCoordinatesSelect(nuevasCoordenadas);
-        handleAddressSelect(formattedAddress);
-        
-        // Centrar el mapa en la nueva ubicación
-        map.setCenter({ lat, lng });
-        map.setZoom(15);
-      } else {
-        alert('No se pudo encontrar la dirección: ' + address);
+        handleAddressSelect(results[0].formatted_address);
+        if (map) {
+          map.setCenter({ lat, lng });
+          map.setZoom(15);
+        }
       }
     });
   };
 
-  // Verificar si Google Maps está disponible
-  if (!window.google || !window.google.maps) {
-    return (
-      <div style={{
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        height: '200px',
-        background: '#fff3cd',
-        borderRadius: '8px',
-        border: '2px solid #ffeaa7',
-        color: '#856404'
-      }}>
-        <div style={{ textAlign: 'center' }}>
-          <div style={{ fontSize: '24px', marginBottom: '10px' }}>⏳</div>
-          <div>Esperando Google Maps API...</div>
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div>
-      {/* Buscador de direcciones */}
-      <div style={{
-        marginBottom: 15,
-        padding: 15,
-        background: 'white',
-        borderRadius: 8,
-        border: '2px solid #d1d5db'
-      }}>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 10 }}>
-          <span style={{ fontSize: 14, fontWeight: 'bold', minWidth: '80px' }}>Buscar:</span>
-          <input
-            ref={autocompleteInputRef}
-            type="text"
-            placeholder="Busca una dirección en Ecuador..."
-            style={{
-              flex: 1,
-              padding: '8px 12px',
-              border: '1px solid #ccc',
-              borderRadius: 4,
-              fontSize: 14
-            }}
-            onKeyPress={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault();
-                handleBuscarDireccion();
-              }
-            }}
-          />
-          <button
-            type="button"
-            onClick={handleBuscarDireccion}
-            style={{
-              padding: '8px 12px',
-              background: '#3b82f6',
-              color: 'white',
-              border: 'none',
-              borderRadius: 4,
-              fontSize: 14,
-              cursor: 'pointer'
-            }}
-          >
-            🔍 Buscar
-          </button>
-        </div>
-        <div style={{ fontSize: 12, color: '#666' }}>
-          💡 Escribe una dirección, haz clic en el mapa o arrastra el marcador para seleccionar ubicación
-        </div>
+    <div style={{ padding: 15 }}>
+      <div style={{ display: 'flex', gap: 10, marginBottom: 10 }}>
+        <input
+          ref={autocompleteInputRef}
+          type="text"
+          placeholder="Buscar dirección..."
+          style={{ flex: 1, padding: '8px 12px', border: '1px solid #ccc', borderRadius: 4, fontSize: 14 }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              handleBuscarDireccion();
+            }
+          }}
+        />
+        <button
+          type="button"
+          onClick={handleBuscarDireccion}
+          style={{ padding: '8px 12px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: 4, fontSize: 14, cursor: 'pointer' }}
+        >
+          🔍 Buscar
+        </button>
       </div>
-
-      {/* Mapa */}
-      <div
-        ref={mapRef}
-        style={{
-          width: "100%",
-          height: "400px",
-          borderRadius: "8px",
-          border: "2px solid #d1d5db"
-        }}
-      />
+      <div ref={mapRef} style={{ width: '100%', height: 360, border: '2px solid #ddd', borderRadius: 8, background: '#f8f9fa' }} />
+      <div style={{ fontSize: 12, color: '#666', marginTop: 6 }}>
+        💡 Escribe una dirección, haz clic en el mapa o arrastra el marcador para seleccionar ubicación
+      </div>
     </div>
   );
 }
 
-// Wrapper para manejar el estado de carga de Google Maps
-function MapaSelector({ onCoordinatesSelect, onAddressSelect, coordenadas, direccionFormulario }) {
-  const [mapaVisible, setMapaVisible] = useState(false);
-  const [coordenadasTemp, setCoordenadasTemp] = useState(coordenadas || '-0.2298500,-78.5249500');
+// Selector con Wrapper y controles de visibilidad/coordenadas
+function MapaSelector({ mapaVisible, setMapaVisible, onCoordinatesSelect, onAddressSelect, coordenadas, direccionFormulario, center }) {
+  const [coordenadasTemp, setCoordenadasTemp] = useState(coordenadas || '');
 
   useEffect(() => {
-    if (coordenadas && coordenadas !== coordenadasTemp) {
-      setCoordenadasTemp(coordenadas);
-    }
-  }, [coordenadas]); // Solo depende de coordenadas
+    setCoordenadasTemp(coordenadas || '');
+  }, [coordenadas]);
 
   const render = (status) => {
     switch (status) {
       case Status.LOADING:
         return (
-          <div style={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            height: '200px',
-            background: '#f3f4f6',
-            borderRadius: '8px',
-            border: '2px solid #d1d5db'
-          }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200, background: '#f3f4f6', borderRadius: 8, border: '2px solid #d1d5db' }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '24px', marginBottom: '10px' }}>🗺️</div>
+              <div style={{ fontSize: 24, marginBottom: 10 }}>🗺️</div>
               <div>Cargando Google Maps...</div>
             </div>
           </div>
         );
       case Status.FAILURE:
         return (
-          <div style={{
-            display: 'flex',
-            justifyContent: 'center',
-            alignItems: 'center',
-            height: '200px',
-            background: '#fee2e2',
-            borderRadius: '8px',
-            border: '2px solid #fecaca',
-            color: '#dc2626'
-          }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: 200, background: '#fee2e2', borderRadius: 8, border: '2px solid #fecaca', color: '#dc2626' }}>
             <div style={{ textAlign: 'center' }}>
-              <div style={{ fontSize: '24px', marginBottom: '10px' }}>❌</div>
+              <div style={{ fontSize: 24, marginBottom: 10 }}>❌</div>
               <div>Error al cargar Google Maps</div>
-              <div style={{ fontSize: '12px', marginTop: '5px' }}>
-                Verifique la conexión a internet y la API key
-              </div>
+              <div style={{ fontSize: 12, marginTop: 5 }}>Verifique la conexión a internet y la API key</div>
             </div>
           </div>
         );
@@ -344,6 +230,7 @@ function MapaSelector({ onCoordinatesSelect, onAddressSelect, coordenadas, direc
             onAddressSelect={onAddressSelect}
             coordenadas={coordenadas}
             direccionFormulario={direccionFormulario}
+            center={center}
           />
         );
       default:
@@ -354,81 +241,39 @@ function MapaSelector({ onCoordinatesSelect, onAddressSelect, coordenadas, direc
   return (
     <div style={{ marginTop: 20 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
-        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 'bold' }}>
-          🗺️ Google Maps - Selector de Coordenadas
-        </h3>
+        <h3 style={{ margin: 0, fontSize: 16, fontWeight: 'bold' }}>🗺️ Google Maps - Selector de Coordenadas</h3>
         <button
           type="button"
           onClick={() => setMapaVisible(!mapaVisible)}
-          style={{
-            padding: '8px 12px',
-            background: '#3b82f6',
-            color: 'white',
-            border: 'none',
-            borderRadius: 4,
-            fontSize: 14,
-            cursor: 'pointer'
-          }}
+          style={{ padding: '8px 12px', background: '#3b82f6', color: 'white', border: 'none', borderRadius: 4, fontSize: 14, cursor: 'pointer' }}
         >
           {mapaVisible ? 'Ocultar Mapa' : 'Mostrar Mapa'}
         </button>
       </div>
 
       {mapaVisible && (
-        <div style={{
-          border: '2px solid #ccc',
-          borderRadius: 8,
-          background: '#f8f9fa',
-          overflow: 'hidden'
-        }}>
-          {/* Google Maps con Places API */}
-          <Wrapper 
-            apiKey={GOOGLE_MAPS_API_KEY} 
-            render={render} 
-            libraries={['places']}
-          />
+        <div style={{ border: '2px solid #ccc', borderRadius: 8, background: '#f8f9fa', overflow: 'hidden' }}>
+          <Wrapper apiKey={GOOGLE_MAPS_API_KEY} render={render} libraries={['places']} />
 
           {/* Controles de coordenadas manuales */}
-          <div style={{
-            padding: 15,
-            borderTop: '1px solid #ddd',
-            background: 'white'
-          }}>
+          <div style={{ padding: 15, borderTop: '1px solid #ddd', background: 'white' }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <span style={{ fontSize: 14, fontWeight: 'bold' }}>Coordenadas:</span>
               <input
                 type="text"
                 value={coordenadasTemp}
-                onChange={(e) => {
-                  setCoordenadasTemp(e.target.value);
-                }}
-                onBlur={(e) => {
-                  onCoordinatesSelect(e.target.value);
-                }}
+                onChange={(e) => setCoordenadasTemp(e.target.value)}
+                onBlur={(e) => onCoordinatesSelect(e.target.value)}
                 placeholder="Lat,Lng (ej: -0.2298500,-78.5249500)"
-                style={{
-                  flex: 1,
-                  padding: '8px 12px',
-                  border: '1px solid #ccc',
-                  borderRadius: 4,
-                  fontSize: 14
-                }}
+                style={{ flex: 1, padding: '8px 12px', border: '1px solid #ccc', borderRadius: 4, fontSize: 14 }}
               />
               <button
                 type="button"
                 onClick={async () => {
                   await onCoordinatesSelect(coordenadasTemp);
-                  alert('Coordenadas aplicadas y mapa ocultado');
+                  setMapaVisible(false);
                 }}
-                style={{
-                  padding: '8px 12px',
-                  background: '#10b981',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 4,
-                  fontSize: 14,
-                  cursor: 'pointer'
-                }}
+                style={{ padding: '8px 12px', background: '#10b981', color: 'white', border: 'none', borderRadius: 4, fontSize: 14, cursor: 'pointer' }}
               >
                 Aplicar
               </button>
@@ -439,33 +284,70 @@ function MapaSelector({ onCoordinatesSelect, onAddressSelect, coordenadas, direc
     </div>
   );
 }
-
 // Formulario principal de Taxi
-function TaxiForm() {
+// Formulario principal de Taxi
+function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, setReporteDiario, authTrigger, setIsCollapsed }) {
   // Estados para autenticación de operadores
-  const [operadorAutenticado, setOperadorAutenticado] = useState(null);
-  const [mostrarModalOperador, setMostrarModalOperador] = useState(true);
-  const [usuarioOperador, setUsuarioOperador] = useState('');
+  const [mostrarModalOperador, setMostrarModalOperador] = useState(false);
   const [codigoOperador, setCodigoOperador] = useState('');
   const [errorAutenticacion, setErrorAutenticacion] = useState('');
   const [cargandoAutenticacion, setCargandoAutenticacion] = useState(false);
+  const [siguienteNumeroAutorizacion, setSiguienteNumeroAutorizacion] = useState(40000);
 
-  // Estados para reportes diarios
-  const [reporteDiario, setReporteDiario] = useState({
-    viajesRegistrados: 0,
-    viajesAsignados: 0,
-    viajesCancelados: 0,
-    viajesFinalizados: 0,
-    vouchersGenerados: 0
-  });
+  // Abrir modal cuando se dispare authTrigger desde el Header
+  useEffect(() => {
+    if (authTrigger > 0) {
+      setMostrarModalOperador(true);
+      setCodigoOperador('');
+      setErrorAutenticacion('');
+    }
+  }, [authTrigger]);
+
+  // Restaurar operadora autenticada desde localStorage al montar el formulario
+  useEffect(() => {
+    try {
+      if (!operadorAutenticado) {
+        const saved = localStorage.getItem('operadorAutenticado');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && parsed.nombre) {
+            setOperadorAutenticado(parsed);
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Error restaurando operadorAutenticado en TaxiForm:', e);
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+
+
+  // Función para obtener el siguiente número de autorización
+  const obtenerSiguienteNumeroAutorizacion = async () => {
+    try {
+      const vouchersRef = collection(db, 'voucherCorporativos');
+      const q = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        const ultimoVoucher = querySnapshot.docs[0].data();
+        console.log('Último voucher encontrado:', ultimoVoucher.numeroAutorizacion);
+        const siguienteNumero = Math.max(40000, (ultimoVoucher.numeroAutorizacion || 39999) + 1);
+        console.log('Siguiente número calculado:', siguienteNumero);
+        setSiguienteNumeroAutorizacion(siguienteNumero);
+      } else {
+        console.log('No se encontraron vouchers, usando número inicial: 40000');
+        setSiguienteNumeroAutorizacion(40000);
+      }
+    } catch (error) {
+      console.error('Error al obtener número de autorización:', error);
+      setSiguienteNumeroAutorizacion(40000);
+    }
+  };
 
   // Función para autenticar operador
   const autenticarOperador = async () => {
-    if (!usuarioOperador.trim()) {
-      setErrorAutenticacion('El usuario es obligatorio');
-      return;
-    }
-
     if (!codigoOperador || codigoOperador.length !== 4 || !/^\d{4}$/.test(codigoOperador)) {
       setErrorAutenticacion('El código debe tener exactamente 4 dígitos numéricos');
       return;
@@ -477,26 +359,27 @@ function TaxiForm() {
     try {
       const operadoresRef = collection(db, 'operadores');
       const q = query(operadoresRef, 
-        where('usuario', '==', usuarioOperador.trim()),
         where('codigo', '==', codigoOperador)
       );
       const snapshot = await getDocs(q);
 
       if (!snapshot.empty) {
         const operador = snapshot.docs[0].data();
-        setOperadorAutenticado({
+        const operadorState = {
           id: snapshot.docs[0].id,
           nombre: operador.nombre,
           usuario: operador.usuario,
           codigo: operador.codigo
-        });
+        };
+        setOperadorAutenticado(operadorState);
+        try { localStorage.setItem('operadorAutenticado', JSON.stringify(operadorState)); } catch {}
         setMostrarModalOperador(false);
         console.log('✅ Operador autenticado:', operador.nombre);
         
         // Cargar reporte diario del operador
         await cargarReporteDiario(operador.nombre);
       } else {
-        setErrorAutenticacion('Usuario o código incorrecto');
+        setErrorAutenticacion('Código incorrecto');
       }
     } catch (error) {
       console.error('❌ Error al autenticar operador:', error);
@@ -529,15 +412,44 @@ function TaxiForm() {
           viajesRegistrados: 0,
           viajesAsignados: 0,
           viajesCancelados: 0,
+          viajesCanceladosPorCliente: 0,
+          viajesCanceladosPorConductor: 0,
+          viajesSinUnidad: 0,
           viajesFinalizados: 0,
           vouchersGenerados: 0,
-          ultimaActualizacion: new Date()
+          viajesAutomaticos: 0,
+          clientesNuevos: 0,
+          ultimaActualizacion: new Date().toISOString()
         };
         await setDoc(reporteRef, reporteInicial);
         setReporteDiario(reporteInicial);
       }
     } catch (error) {
       console.error('❌ Error al cargar reporte diario:', error);
+    }
+  };
+
+  // Función utilitaria: incrementar contador de clientes nuevos para el operador actual
+  const incrementarClienteNuevo = async () => {
+    try {
+      if (!operadorAutenticado) return;
+      const hoy = new Date();
+      const fechaHoy = hoy.toLocaleDateString('es-EC', {
+        day: '2-digit', month: '2-digit', year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const reporteRef = doc(db, 'reportesDiarios', `${operadorAutenticado.nombre}_${fechaHoy}`);
+      await updateDoc(reporteRef, {
+        clientesNuevos: increment(1),
+        ultimaActualizacion: new Date().toISOString()
+      });
+
+      if (operadorAutenticado.id) {
+        const operadorRef = doc(db, 'operadores', operadorAutenticado.id);
+        await updateDoc(operadorRef, { clientesNuevosRegistrados: increment(1) });
+      }
+    } catch (e) {
+      console.error('Error incrementando clientes nuevos:', e);
     }
   };
 
@@ -559,7 +471,7 @@ function TaxiForm() {
       const campoContador = tipoAccion;
       await updateDoc(reporteRef, {
         [campoContador]: increment(1),
-        ultimaActualizacion: new Date()
+        ultimaActualizacion: new Date().toISOString()
       });
 
       // Actualizar estado local
@@ -574,22 +486,31 @@ function TaxiForm() {
     }
   };
 
+  // Función para cambiar de usuario
+  const cambiarUsuario = () => {
+    setMostrarModalOperador(true);
+    setCodigoOperador('');
+    setErrorAutenticacion('');
+  };
+
   // Función para cerrar sesión de operador
   const cerrarSesionOperador = () => {
     setOperadorAutenticado(null);
-    setMostrarModalOperador(true);
-    setUsuarioOperador('');
+    setMostrarModalOperador(false);
     setCodigoOperador('');
     setErrorAutenticacion('');
     setReporteDiario({
       viajesRegistrados: 0,
       viajesAsignados: 0,
       viajesCancelados: 0,
-      viajesFinalizados: 0,
-      vouchersGenerados: 0
+      viajesCanceladosPorCliente: 0,
+      viajesCanceladosPorConductor: 0,
+      viajesSinUnidad: 0
     });
   };
 
+  const [telefono, setTelefono] = useState('');
+  const [nombre, setNombre] = useState('');
   const [coordenadas, setCoordenadas] = useState('');
   const [direccion, setDireccion] = useState('');
   const [base, setBase] = useState('0');
@@ -614,6 +535,14 @@ function TaxiForm() {
     coleccion: '', 
     modoAplicacion: false,
     datosCliente: { nombre: '', direccion: '', coordenadas: '', sector: '', prefijo: 'Ecuador' }
+  });
+  // Modal de Reserva (F7)
+  const [modalReserva, setModalReserva] = useState({
+    open: false,
+    datosCliente: { telefono: '', nombre: '', direccion: '', coordenadas: '' },
+    fechaHora: '',
+    motivo: '',
+    destino: ''
   });
        const [viajesAsignados, setViajesAsignados] = useState([]);
    const [cargandoViajes, setCargandoViajes] = useState(false);
@@ -748,15 +677,192 @@ function TaxiForm() {
         // Solo cambiar el estado en la colección configuracion
         cambiarEstadoConfiguracion();
       }
+      // Abrir modal de reserva con F7
+      if (event.key === 'F7') {
+        event.preventDefault();
+        // Validar que exista un cliente buscado o datos mínimos cargados
+        const telefonoValido = (telefono || '').trim().length >= 7;
+        const nombreValido = (nombre || '').trim().length > 0;
+        const direccionValida = (direccion || '').trim().length > 0;
+        if (!telefonoValido || (!usuarioEncontrado && (!nombreValido || !direccionValida))) {
+          setModal({ open: true, success: false, message: 'Primero busque un cliente por teléfono y cargue sus datos (nombre y dirección) para poder reservar.' });
+          return;
+        }
+
+        // Prefijar fecha y hora actuales en formato datetime-local
+        const ahora = new Date();
+        const tzOffset = ahora.getTimezoneOffset();
+        const localISOTime = new Date(ahora.getTime() - tzOffset * 60000).toISOString().slice(0, 16);
+
+        setModalReserva({
+          open: true,
+          datosCliente: {
+            telefono: telefono || '',
+            nombre: nombre || usuarioEncontrado?.nombre || '',
+            direccion: direccion || '',
+            coordenadas: coordenadas || ''
+          },
+          fechaHora: localISOTime,
+          motivo: '',
+          destino: ''
+        });
+      }
       if (event.key === 'Escape') {
         setMostrarModal(false);
+        setModalReserva(prev => ({ ...prev, open: false }));
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [modoSeleccion]); // Agregar modoSeleccion como dependencia
+  }, [modoSeleccion, telefono, nombre, direccion, usuarioEncontrado, coordenadas, operadorAutenticado]); // Dependencias para valores recientes en F7
+
+  // Guardar reserva en Firestore
+  // Helper: formatear fecha/hora local dd/MM/yyyy HH:mm
+  const formatearFechaHora = (fecha) => {
+    try {
+      const d = new Date(fecha);
+      const pad = (n) => String(n).padStart(2, '0');
+      const day = pad(d.getDate());
+      const month = pad(d.getMonth() + 1);
+      const year = d.getFullYear();
+      const hours = pad(d.getHours());
+      const mins = pad(d.getMinutes());
+      return `${day}/${month}/${year} ${hours}:${mins}`;
+    } catch {
+      return '';
+    }
+  };
+
+  // Helper: POST x-www-form-urlencoded
+  const postFormUrlEncoded = async (url, params) => {
+    const body = new URLSearchParams(params).toString();
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body
+    });
+    return res;
+  };
+
+  // Enviar mensajes a grupo y al cliente (según regla)
+  const enviarMensajesReserva = async (reserva) => {
+    try {
+      const fechaTxt = formatearFechaHora(reserva.fechaHoraReserva);
+      const msgGrupo = [
+        '📅 Nueva Reserva',
+        `👤 Cliente: ${reserva.nombreCliente || 'N/D'}`,
+        `📍 Dirección: ${reserva.direccion || 'N/D'}`,
+        `🎯 Destino: ${reserva.destino || 'N/D'}`,
+        `🕒 Fecha/Hora: ${fechaTxt || 'N/D'}`,
+        `📝 Motivo: ${reserva.motivo || 'N/D'}`,
+        reserva.operador?.nombre ? `👨‍💼 Operador: ${reserva.operador.nombre}` : null
+      ].filter(Boolean).join('\n');
+
+      // Enviar al grupo (sin teléfono)
+      await postFormUrlEncoded('http://84.46.245.131:3001/send/group/message', {
+        to: '120363343871245265',
+        message: msgGrupo
+      });
+
+      // Enviar al cliente si el teléfono tiene más de 8 dígitos
+      const telRaw = (reserva.telefono || '').trim();
+      if (telRaw.length > 8) {
+        const toNumber = reserva.telefonoCompleto || concatenarTelefonoWhatsApp(telRaw, 'Ecuador');
+        const msgCliente = [
+          '✅ Reserva registrada',
+          `🕒 ${fechaTxt}`,
+          `📍 Desde: ${reserva.direccion || 'N/D'}`,
+          reserva.destino ? `🎯 Hacia: ${reserva.destino}` : null,
+          reserva.motivo ? `📝 Motivo: ${reserva.motivo}` : null
+        ].filter(Boolean).join('\n');
+
+        await postFormUrlEncoded('http://84.46.245.131:3001/send/message', {
+          to: toNumber,
+          message: msgCliente
+        });
+      }
+    } catch (e) {
+      console.error('⚠️ Error al enviar notificaciones de reserva:', e);
+    }
+  };
+
+  const guardarReserva = async () => {
+    try {
+      if (!modalReserva.fechaHora || !modalReserva.motivo.trim()) {
+        setModal({ open: true, success: false, message: 'Complete fecha/hora y motivo de la reserva.' });
+        return;
+      }
+
+      // Intentar obtener teléfono completo para WhatsApp si es celular
+      let telefonoCompleto = modalReserva.datosCliente.telefono || '';
+      const telRaw = (modalReserva.datosCliente.telefono || '').trim();
+      if (telRaw.length >= 9 && telRaw.length <= 10) {
+        try {
+          const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telRaw, 'Ecuador');
+          let clienteRef = doc(db, 'clientestelefonos', telefonoCompletoBusqueda);
+          let clienteSnap = await getDoc(clienteRef);
+          if (clienteSnap.exists()) {
+            const pref = clienteSnap.data().prefijo || 'Ecuador';
+            telefonoCompleto = concatenarTelefonoWhatsApp(telRaw, pref);
+          } else {
+            const ult9 = telRaw.slice(-9);
+            clienteRef = doc(db, 'clientestelefonos', ult9);
+            clienteSnap = await getDoc(clienteRef);
+            if (clienteSnap.exists()) {
+              const pref = clienteSnap.data().prefijo || 'Ecuador';
+              telefonoCompleto = concatenarTelefonoWhatsApp(telRaw, pref);
+            }
+          }
+        } catch (e) {
+          // fallback: dejar el número tal cual
+        }
+      }
+
+      const fechaReserva = new Date(modalReserva.fechaHora);
+
+      const reservaData = {
+        telefono: modalReserva.datosCliente.telefono || '',
+        telefonoCompleto: telefonoCompleto || modalReserva.datosCliente.telefono || '',
+        nombreCliente: modalReserva.datosCliente.nombre || '',
+        direccion: modalReserva.datosCliente.direccion || '',
+        coordenadas: modalReserva.datosCliente.coordenadas || '',
+        fechaHoraReserva: fechaReserva,
+        motivo: modalReserva.motivo.trim(),
+        destino: (modalReserva.destino || '').trim(),
+        estado: 'pendiente',
+        origen: 'central',
+        createdAt: new Date(),
+        operador: operadorAutenticado ? {
+          id: operadorAutenticado.id || '',
+          nombre: operadorAutenticado.nombre || '',
+          email: operadorAutenticado.email || ''
+        } : { id: '', nombre: 'Sin operador', email: '' }
+      };
+
+      const docRef = await addDoc(collection(db, 'reservas'), reservaData);
+      await updateDoc(docRef, { id: docRef.id });
+
+      // Intentar enviar notificaciones (no bloquea el flujo si falla)
+      try {
+        await enviarMensajesReserva(reservaData);
+      } catch {}
+
+      setModalReserva({
+        open: false,
+        datosCliente: { telefono: '', nombre: '', direccion: '', coordenadas: '' },
+        fechaHora: '',
+        motivo: '',
+        destino: ''
+      });
+
+      setModal({ open: true, success: true, message: 'Reserva guardada exitosamente.' });
+    } catch (error) {
+      console.error('❌ Error al guardar la reserva:', error);
+      setModal({ open: true, success: false, message: 'Error al guardar la reserva.' });
+    }
+  };
 
   // Configurar listeners en tiempo real para las colecciones
   useEffect(() => {
@@ -814,8 +920,12 @@ function TaxiForm() {
 
     // Cleanup function para desuscribirse cuando el componente se desmonte
     return () => {
+      if (typeof unsubscribeDisponibles === 'function') {
       unsubscribeDisponibles();
+      }
+      if (typeof unsubscribeEnCurso === 'function') {
       unsubscribeEnCurso();
+      }
     };
   }, []);
 
@@ -1118,7 +1228,6 @@ function TaxiForm() {
       }
     }
   };
-
   // Nueva función para manejar Enter en el campo teléfono
   const handleTelefonoKeyDown = async (e) => {
     if (e.key === 'Enter') {
@@ -1238,7 +1347,6 @@ function TaxiForm() {
       }
     }
   };
-
   // Función para seleccionar una dirección del listado
   const seleccionarDireccion = (direccion) => {
     setDireccionSeleccionada(direccion);
@@ -1417,7 +1525,15 @@ function TaxiForm() {
         email: nuevoCliente.email,
         fechaRegistro: new Date().toISOString()
       };
-      await addDoc(collection(db, coleccionNombre), nuevoUsuario);
+      // Usar teléfono como ID para evitar duplicados y detectar existencia
+      const userDocRef = doc(db, coleccionNombre, String(telefono));
+      const userSnap = await getDoc(userDocRef);
+      const yaExistia = userSnap.exists();
+      await setDoc(userDocRef, nuevoUsuario, { merge: true });
+      // Incrementar solo si no existía
+      if (!yaExistia) {
+        await incrementarClienteNuevo();
+      }
       setNombre(nuevoCliente.nombre);
       setDireccion(nuevoCliente.direccion);
       setCoordenadas(nuevoCliente.coordenadas);
@@ -1484,7 +1600,13 @@ function TaxiForm() {
       }
       
       const clienteRef = doc(db, coleccionNombre, telefonoId);
-      await setDoc(clienteRef, nuevoCliente);
+      const clienteExistenteSnap = await getDoc(clienteRef);
+      const yaExistia = clienteExistenteSnap.exists();
+      await setDoc(clienteRef, nuevoCliente, { merge: true });
+      // Incrementar contador de clientes nuevos solo si no existía antes
+      if (!yaExistia) {
+        await incrementarClienteNuevo();
+      }
       
       console.log('📍 Cliente registrado con direcciones mapeadas:', nuevoCliente);
       
@@ -1509,7 +1631,6 @@ function TaxiForm() {
         success: true, 
         message: `${tipoCliente} registrado exitosamente en la colección ${coleccionNombre}` 
       });
-      
     } catch (error) {
       console.error('Error al registrar cliente:', error);
       setModal({ 
@@ -1789,7 +1910,6 @@ function TaxiForm() {
       }
     }, 100);
   };
-
      // Función para insertar pedido disponible
    const handleInsertarViajePendiente = async () => {
      // Evitar múltiples inserciones simultáneas
@@ -1870,7 +1990,8 @@ function TaxiForm() {
          rango: '0', // Rango siempre 0 para pedidos manuales
          viajes: '',
          foto: '0',
-         tarifaSeleccionada: true
+         tarifaSeleccionada: true,
+         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
        };
 
        // Guardar en la colección "pedidosDisponibles"
@@ -1894,6 +2015,8 @@ function TaxiForm() {
        
        // Registro silencioso - sin mostrar alert de éxito
        console.log('✅ Pedido registrado silenciosamente en pedidosDisponibles');
+       // Actualizar contador de viajes registrados
+       await actualizarContadorReporte('viajesRegistrados');
      } catch (error) {
        console.error('Error al registrar el pedido:', error);
        setModal({ open: true, success: false, message: 'Error al registrar el pedido.' });
@@ -1940,8 +2063,20 @@ function TaxiForm() {
 
       // Obtener datos del conductor
       const conductorData = conductoresSnapshot.docs[0].data();
+      // Validar estatus del conductor (inactivo => bloquear asignación)
+      try {
+        const estatusValor = conductorData && 'estatus' in conductorData ? conductorData.estatus : true;
+        const estatusBool = typeof estatusValor === 'string' ? estatusValor.toLowerCase() !== 'false' : Boolean(estatusValor);
+        if (!estatusBool) {
+          setModal({ open: true, success: false, message: `La unidad ${unidad} está suspendida/inactiva. No se puede asignar.` });
+          setInsertandoRegistro(false);
+          return;
+        }
+      } catch (e) {
+        console.warn('No se pudo validar estatus del conductor, continuando por defecto.', e);
+      }
       
-       // Generar ID único para asignación manual
+  // Generar ID único para asignación manual
        const idConductorManual = `conductor_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@manual.com`;
        
        // Obtener el token del conductor (si existe)
@@ -2035,7 +2170,8 @@ function TaxiForm() {
          viajes: unidad || '',
          tarifaSeleccionada: true,
          modoSeleccion: 'manual',
-         modoAsignacion: 'manual' // Campo adicional para indicar asignación manual
+         modoAsignacion: 'manual', // Campo adicional para indicar asignación manual
+         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
        };
 
        // Guardar directamente en la colección "pedidoEnCurso"
@@ -2143,7 +2279,8 @@ function TaxiForm() {
         estado: 'Cancelado por Cliente',
         fechaCancelacion: fechaActual,
         motivoCancelacion: 'Cancelado por el cliente',
-        fechaRegistroCancelacion: fechaActual
+        fechaRegistroCancelacion: fechaActual,
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
       // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
@@ -2155,8 +2292,9 @@ function TaxiForm() {
 
       console.log('✅ Pedido cancelado por cliente, guardado en todosLosViajes y eliminado de la colección original');
       
-      // Actualizar contador de viajes cancelados
+      // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
+      await actualizarContadorReporte('viajesCanceladosPorCliente');
       
       cerrarModalAccionesPedido();
     } catch (error) {
@@ -2192,7 +2330,8 @@ function TaxiForm() {
         estado: 'Cancelado por Unidad',
         fechaCancelacion: fechaActual,
         motivoCancelacion: 'Cancelado por la unidad',
-        fechaRegistroCancelacion: fechaActual
+        fechaRegistroCancelacion: fechaActual,
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
       // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
@@ -2204,8 +2343,9 @@ function TaxiForm() {
 
       console.log('✅ Pedido cancelado por unidad, guardado en todosLosViajes y eliminado de la colección original');
       
-      // Actualizar contador de viajes cancelados
+      // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
+      await actualizarContadorReporte('viajesCanceladosPorConductor');
       
       cerrarModalAccionesPedido();
     } catch (error) {
@@ -2236,6 +2376,13 @@ function TaxiForm() {
     numeroAutorizacion: null,
     activo: false
   });
+
+  // Abrir el sidebar cuando se cambia de sección (excepto cuando el modal está abierto)
+  useEffect(() => {
+    if (setIsCollapsed && !modalVoucher.open) {
+      setIsCollapsed(false);
+    }
+  }, [setIsCollapsed, modalVoucher.open]);
 
   // Lista de empresas para el voucher
   const empresasVoucher = [
@@ -2306,6 +2453,9 @@ function TaxiForm() {
     try {
       const pedido = modalAccionesPedido.pedido;
       
+      // Obtener el siguiente número de autorización
+      await obtenerSiguienteNumeroAutorizacion();
+      
       // Preparar datos del voucher
       const voucherData = {
         fechaHora: new Date().toLocaleString('es-EC'),
@@ -2324,6 +2474,11 @@ function TaxiForm() {
         open: true,
         voucher: voucherData
       });
+
+      // Cerrar el sidebar cuando se abre el modal
+      if (setIsCollapsed) {
+        setIsCollapsed(true);
+      }
 
       cerrarModalAccionesPedido();
     } catch (error) {
@@ -2355,9 +2510,14 @@ function TaxiForm() {
       numeroAutorizacion: null,
       activo: false
     });
+
+    // Mantener el sidebar cerrado cuando se cierra el modal
+    if (setIsCollapsed) {
+      setIsCollapsed(true);
+    }
   };
 
-  // Función para guardar voucher
+  // Función para guardar voucher desde pedido existente
   const guardarVoucher = async () => {
     if (!modalAccionesPedido.pedido) return;
 
@@ -2385,7 +2545,8 @@ function TaxiForm() {
         numeroAutorizacion: numeroAutorizacion,
         fechaCreacion: new Date(),
         pedidoId: modalAccionesPedido.pedido?.id || 'N/A',
-        estado: 'Activo'
+        estado: 'Activo',
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
       // Guardar en voucherCorporativos
@@ -2412,7 +2573,8 @@ function TaxiForm() {
         numeroAutorizacionVoucher: numeroAutorizacion,
         voucherData: voucherData,
         esVoucher: true,
-        colorFondo: '#fef3c7' // Color de fondo amarillo para vouchers
+        colorFondo: '#fef3c7', // Color de fondo amarillo para vouchers
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
       // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
@@ -2425,15 +2587,90 @@ function TaxiForm() {
       console.log(`✅ Voucher generado y guardado en todosLosViajes: ${rutaTodosLosViajes}`);
       console.log('✅ Voucher guardado en voucherCorporativos con número:', numeroAutorizacion);
       
-      // Actualizar contador de vouchers generados
-      await actualizarContadorReporte('vouchersGenerados');
-      
       setModal({ open: true, success: true, message: `Voucher generado exitosamente. Número de autorización: ${numeroAutorizacion}` });
       
       cerrarModalVoucher();
     } catch (error) {
       console.error('❌ Error al generar voucher:', error);
       setModal({ open: true, success: false, message: 'Error al generar el voucher.' });
+    }
+  };
+
+  // Función para guardar voucher corporativo desde el modal
+  const guardarVoucherCorporativo = async () => {
+    try {
+      // Validar campos requeridos
+      if (!modalVoucher.voucher.nombreCliente || !modalVoucher.voucher.telefono || !modalVoucher.voucher.empresa) {
+        setModal({ open: true, success: false, message: 'Por favor complete todos los campos requeridos.' });
+        return;
+      }
+
+      // Usar el número de autorización calculado previamente
+      const numeroAutorizacion = siguienteNumeroAutorizacion;
+      console.log('Usando número de autorización:', numeroAutorizacion);
+
+      // Crear el voucher corporativo
+      const voucherData = {
+        ...modalVoucher.voucher,
+        numeroAutorizacion: numeroAutorizacion,
+        fechaCreacion: new Date(),
+        estado: 'Activo',
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        pedidoId: modalAccionesPedido.pedido?.id || 'N/A'
+      };
+
+      // Guardar en voucherCorporativos
+      await addDoc(collection(db, 'voucherCorporativos'), voucherData);
+
+      console.log('✅ Voucher corporativo guardado con número:', numeroAutorizacion);
+      
+      // Si hay un pedido asociado, moverlo a todosLosViajes y eliminarlo de pedidoEnCurso
+      if (modalAccionesPedido.pedido && modalAccionesPedido.coleccion === 'pedidoEnCurso') {
+        try {
+          const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+          
+          // Crear datos del viaje finalizado
+          const fechaActual = new Date();
+          const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+            day: '2-digit',
+            month: '2-digit',
+            year: 'numeric'
+          }).replace(/\//g, '-');
+
+          const viajeFinalizadoData = {
+            ...modalAccionesPedido.pedido,
+            estado: 'Finalizado con Voucher',
+            fechaFinalizacion: fechaActual,
+            voucherGenerado: numeroAutorizacion,
+            operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+          };
+
+          // Guardar en todosLosViajes
+          const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
+          await setDoc(doc(db, rutaTodosLosViajes), viajeFinalizadoData);
+
+          // Eliminar de pedidoEnCurso
+          await deleteDoc(pedidoRef);
+
+          console.log('✅ Pedido movido a todosLosViajes y eliminado de pedidoEnCurso');
+        } catch (error) {
+          console.error('❌ Error al procesar el pedido:', error);
+        }
+      }
+      
+      // Actualizar el siguiente número de autorización
+      setSiguienteNumeroAutorizacion(numeroAutorizacion + 1);
+      
+      setModal({ 
+        open: true, 
+        success: true, 
+        message: `Voucher corporativo generado exitosamente. Número de autorización: ${numeroAutorizacion}` 
+      });
+      
+      cerrarModalVoucher();
+    } catch (error) {
+      console.error('❌ Error al generar voucher corporativo:', error);
+      setModal({ open: true, success: false, message: 'Error al generar el voucher corporativo.' });
     }
   };
 
@@ -2488,7 +2725,8 @@ function TaxiForm() {
         estado: 'Cancelado por Cliente Sin Asignar',
         fechaCancelacion: fechaActual,
         motivoCancelacion: 'Cancelado por el cliente sin asignar unidad',
-        fechaRegistroCancelacion: fechaActual
+        fechaRegistroCancelacion: fechaActual,
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
       // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
@@ -2500,8 +2738,10 @@ function TaxiForm() {
 
       console.log('✅ Pedido cancelado sin asignar, guardado en todosLosViajes y eliminado de la colección original');
       
-      // Actualizar contador de viajes cancelados
+      // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
+      await actualizarContadorReporte('viajesCanceladosPorCliente');
+      await actualizarContadorReporte('viajesSinUnidad');
       
       cerrarModalAccionesPedido();
     } catch (error) {
@@ -2536,7 +2776,8 @@ function TaxiForm() {
         estado: 'No Hubo Unidad Disponible',
         fechaCancelacion: fechaActual,
         motivoCancelacion: 'No hubo unidad disponible para asignar',
-        fechaRegistroCancelacion: fechaActual
+        fechaRegistroCancelacion: fechaActual,
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
       // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
@@ -2548,8 +2789,9 @@ function TaxiForm() {
 
       console.log('✅ Pedido marcado como no hubo unidad disponible, guardado en todosLosViajes y eliminado de la colección original');
       
-      // Actualizar contador de viajes cancelados
+      // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
+      await actualizarContadorReporte('viajesSinUnidad');
       
       cerrarModalAccionesPedido();
     } catch (error) {
@@ -2573,7 +2815,6 @@ function TaxiForm() {
       setModal({ open: true, success: false, message: 'Error al generar la reserva.' });
     }
   };
-
   // Función para cambiar estado del pedido
   const cambiarEstadoPedido = async (nuevoEstado) => {
     if (!modalAccionesPedido.pedido) return;
@@ -2648,7 +2889,8 @@ function TaxiForm() {
         fechaRegistroFinalizacion: fechaActual,
         motivoFinalizacion: 'Pedido completado exitosamente',
         esViajeFinalizado: true,
-        colorFondo: '#dbeafe' // Color de fondo azul claro para viajes finalizados
+        colorFondo: '#dbeafe', // Color de fondo azul claro para viajes finalizados
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
       // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
@@ -2659,9 +2901,6 @@ function TaxiForm() {
       await deleteDoc(pedidoRef);
 
       console.log(`✅ Pedido finalizado y guardado en todosLosViajes: ${rutaTodosLosViajes}`);
-      
-      // Actualizar contador de viajes finalizados
-      await actualizarContadorReporte('viajesFinalizados');
       
       setModal({ open: true, success: true, message: 'Pedido finalizado exitosamente.' });
       
@@ -2715,6 +2954,17 @@ function TaxiForm() {
 
        // Obtener datos del conductor
        const conductorData = conductoresSnapshot.docs[0].data();
+       // Validar estatus del conductor (inactivo => bloquear asignación)
+       try {
+         const estatusValor = conductorData && 'estatus' in conductorData ? conductorData.estatus : true;
+         const estatusBool = typeof estatusValor === 'string' ? estatusValor.toLowerCase() !== 'false' : Boolean(estatusValor);
+         if (!estatusBool) {
+           setModal({ open: true, success: false, message: `La unidad ${unidadEdit} está suspendida/inactiva. No se puede asignar.` });
+           return;
+         }
+       } catch (e) {
+         console.warn('No se pudo validar estatus del conductor en edición, continuando por defecto.', e);
+       }
 
        // Generar ID único para asignación manual
        const idConductorManual = `conductor_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@manual.com`;
@@ -2761,7 +3011,8 @@ function TaxiForm() {
          latitudConductor: '',
          longitudConductor: '',
          tarifaSeleccionada: true,
-         modoAsignacion: 'manual' // Campo adicional para indicar asignación manual
+         modoAsignacion: 'manual', // Campo adicional para indicar asignación manual
+         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
        };
 
        // 3. Agregar a pedidoEnCurso
@@ -2914,7 +3165,8 @@ function TaxiForm() {
         tarifaSeleccionada: true,
         
         // Identificación del modo
-        modoSeleccion: modoSeleccion
+        modoSeleccion: modoSeleccion,
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
       // Inserción directa en la colección "pedidosDisponibles"
@@ -2935,6 +3187,9 @@ function TaxiForm() {
        
        // Limpiar formulario completo y enfocar teléfono
        limpiarFormularioCompleto();
+       
+       // Actualizar contador de viajes registrados
+       await actualizarContadorReporte('viajesRegistrados');
 
      /// setModal({ open: true, success: true, message: '¡Pedido registrado directamente en la base de datos!' });
     } catch (error) {
@@ -3198,7 +3453,7 @@ function TaxiForm() {
             fontSize: '24px',
             fontWeight: 'bold'
           }}>
-            🔐 Autenticación de Operador
+            🔄 Cambiar Operador
           </h2>
           
           <p style={{
@@ -3206,29 +3461,8 @@ function TaxiForm() {
             marginBottom: '25px',
             fontSize: '14px'
           }}>
-            Ingrese su usuario y código de operador para acceder al sistema
+            Ingrese el código del operador para cambiar de usuario
           </p>
-
-          <input
-            type="text"
-            value={usuarioOperador}
-            onChange={(e) => setUsuarioOperador(e.target.value)}
-            placeholder="Usuario"
-            style={{
-              width: '100%',
-              padding: '12px 16px',
-              border: '2px solid #e5e7eb',
-              borderRadius: '8px',
-              fontSize: '16px',
-              marginBottom: '15px',
-              textAlign: 'center'
-            }}
-            onKeyPress={(e) => {
-              if (e.key === 'Enter') {
-                autenticarOperador();
-              }
-            }}
-          />
 
           <input
             type="password"
@@ -3252,6 +3486,7 @@ function TaxiForm() {
                 autenticarOperador();
               }
             }}
+            autoFocus
           />
 
           {errorAutenticacion && (
@@ -3300,7 +3535,6 @@ function TaxiForm() {
       </div>
     );
   }
-
      return (
      <div style={{
        background: '#f3f4f6',
@@ -3312,151 +3546,14 @@ function TaxiForm() {
        minWidth: 'auto',
        fontFamily: 'Arial, sans-serif',
        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
-       boxSizing: 'border-box'
+       boxSizing: 'border-box',
+       position: 'sticky',
+       top: 0,
+       zIndex: 1000,
+       backgroundColor: '#f3f4f6'
      }}>
       
-      {/* Panel de información del operador y reportes diarios */}
-      {operadorAutenticado && (
-        <div style={{
-          backgroundColor: '#ffffff',
-          padding: '15px',
-          borderRadius: '8px',
-          marginBottom: '20px',
-          border: '1px solid #e5e7eb',
-          boxShadow: '0 1px 3px rgba(0,0,0,0.1)'
-        }}>
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            marginBottom: '15px'
-          }}>
-            <div>
-              <h3 style={{
-                margin: '0 0 5px 0',
-                color: '#1f2937',
-                fontSize: '18px',
-                fontWeight: 'bold'
-              }}>
-                👤 Operador: {operadorAutenticado.nombre}
-              </h3>
-              <p style={{
-                margin: '0 0 3px 0',
-                color: '#6b7280',
-                fontSize: '14px'
-              }}>
-                👤 Usuario: {operadorAutenticado.usuario}
-              </p>
-              <p style={{
-                margin: '0',
-                color: '#6b7280',
-                fontSize: '14px'
-              }}>
-                📊 Reporte Diario - {new Date().toLocaleDateString('es-EC')}
-              </p>
-            </div>
-            <button
-              onClick={cerrarSesionOperador}
-              style={{
-                padding: '8px 16px',
-                backgroundColor: '#ef4444',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                fontSize: '14px',
-                cursor: 'pointer',
-                fontWeight: '600'
-              }}
-              onMouseEnter={(e) => e.target.style.backgroundColor = '#dc2626'}
-              onMouseLeave={(e) => e.target.style.backgroundColor = '#ef4444'}
-            >
-              🚪 Cerrar Sesión
-            </button>
-          </div>
 
-          {/* Contadores de reporte diario */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))',
-            gap: '10px'
-          }}>
-            <div style={{
-              backgroundColor: '#dbeafe',
-              padding: '10px',
-              borderRadius: '6px',
-              textAlign: 'center',
-              border: '1px solid #bfdbfe'
-            }}>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#1e40af' }}>
-                {reporteDiario.viajesRegistrados}
-              </div>
-              <div style={{ fontSize: '12px', color: '#374151' }}>
-                🚗 Viajes Registrados
-              </div>
-            </div>
-
-            <div style={{
-              backgroundColor: '#d1fae5',
-              padding: '10px',
-              borderRadius: '6px',
-              textAlign: 'center',
-              border: '1px solid #a7f3d0'
-            }}>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#065f46' }}>
-                {reporteDiario.viajesAsignados}
-              </div>
-              <div style={{ fontSize: '12px', color: '#374151' }}>
-                ✅ Viajes Asignados
-              </div>
-            </div>
-
-            <div style={{
-              backgroundColor: '#fef3c7',
-              padding: '10px',
-              borderRadius: '6px',
-              textAlign: 'center',
-              border: '1px solid #fde68a'
-            }}>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#92400e' }}>
-                {reporteDiario.viajesFinalizados}
-              </div>
-              <div style={{ fontSize: '12px', color: '#374151' }}>
-                🏁 Viajes Finalizados
-              </div>
-            </div>
-
-            <div style={{
-              backgroundColor: '#fee2e2',
-              padding: '10px',
-              borderRadius: '6px',
-              textAlign: 'center',
-              border: '1px solid #fecaca'
-            }}>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#991b1b' }}>
-                {reporteDiario.viajesCancelados}
-              </div>
-              <div style={{ fontSize: '12px', color: '#374151' }}>
-                ❌ Viajes Cancelados
-              </div>
-            </div>
-
-            <div style={{
-              backgroundColor: '#f3e8ff',
-              padding: '10px',
-              borderRadius: '6px',
-              textAlign: 'center',
-              border: '1px solid #e9d5ff'
-            }}>
-              <div style={{ fontSize: '20px', fontWeight: 'bold', color: '#7c3aed' }}>
-                {reporteDiario.vouchersGenerados}
-              </div>
-              <div style={{ fontSize: '12px', color: '#374151' }}>
-                🎫 Vouchers Generados
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
 
       <form onSubmit={handleSubmit}>
         <div style={{ 
@@ -4011,6 +4108,8 @@ function TaxiForm() {
       {/* Google Maps con búsqueda de direcciones - solo en modo aplicación */}
       {modoSeleccion === 'aplicacion' && (
         <MapaSelector 
+          mapaVisible={mapaVisible}
+          setMapaVisible={setMapaVisible}
           onCoordinatesSelect={handleCoordinatesSelect}
           onAddressSelect={handleAddressSelect}
           coordenadas={coordenadas}
@@ -4915,7 +5014,6 @@ function TaxiForm() {
           </div>
         )}
       </div>
-
       {/* Modal de registro de clientes */}
       {modalRegistroCliente.open && (
         <div style={{
@@ -5169,6 +5267,8 @@ function TaxiForm() {
                   overflow: 'hidden'
                 }}>
                   <MapaSelector 
+                    mapaVisible={true}
+                    setMapaVisible={() => {}}
                     onCoordinatesSelect={(coords) => {
                       setModalRegistroCliente(prev => ({
                         ...prev,
@@ -5357,6 +5457,105 @@ function TaxiForm() {
             >
               Aceptar
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de Reserva (F7) */}
+      {modalReserva.open && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '28px',
+            borderRadius: '12px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            width: '540px',
+            maxWidth: '90vw',
+            maxHeight: '90vh',
+            overflowY: 'auto'
+          }}>
+            <h3 style={{ margin: '0 0 16px 0', color: '#111827', fontSize: 20, fontWeight: 700 }}>
+              📅 Crear Reserva
+            </h3>
+
+            <div style={{ background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 8, padding: 12, marginBottom: 16 }}>
+              <div style={{ fontSize: 14, color: '#374151', marginBottom: 6 }}>👤 Cliente</div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Nombre</div>
+                  <input type="text" readOnly value={modalReserva.datosCliente.nombre}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, background: '#f3f4f6' }} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Teléfono</div>
+                  <input type="text" readOnly value={modalReserva.datosCliente.telefono}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, background: '#f3f4f6' }} />
+                </div>
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <div style={{ fontSize: 12, color: '#6b7280' }}>Dirección</div>
+                  <input type="text" readOnly value={modalReserva.datosCliente.direccion}
+                    style={{ width: '100%', padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, background: '#f3f4f6' }} />
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginBottom: 16 }}>
+              <div>
+                <div style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>Fecha y Hora de la Reserva</div>
+                <input
+                  type="datetime-local"
+                  value={modalReserva.fechaHora}
+                  onChange={(e) => setModalReserva(prev => ({ ...prev, fechaHora: e.target.value }))}
+                  style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: 6 }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>Destino</div>
+                <input
+                  type="text"
+                  placeholder="Ej. Aeropuerto, Centro Comercial, Dirección específica..."
+                  value={modalReserva.destino}
+                  onChange={(e) => setModalReserva(prev => ({ ...prev, destino: e.target.value }))}
+                  style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: 6 }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>Motivo</div>
+                <textarea
+                  rows="3"
+                  value={modalReserva.motivo}
+                  onChange={(e) => setModalReserva(prev => ({ ...prev, motivo: e.target.value }))}
+                  placeholder="Ej. Traslado al aeropuerto, cliente solicita unidad a primera hora..."
+                  style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: 6, resize: 'vertical' }}
+                />
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button
+                onClick={guardarReserva}
+                style={{ padding: '10px 18px', border: 'none', borderRadius: 8, background: '#10b981', color: 'white', fontWeight: 700, cursor: 'pointer' }}
+              >
+                💾 Guardar Reserva
+              </button>
+              <button
+                onClick={() => setModalReserva(prev => ({ ...prev, open: false }))}
+                style={{ padding: '10px 18px', border: '1px solid #6b7280', borderRadius: 8, background: 'transparent', color: '#374151', fontWeight: 700, cursor: 'pointer' }}
+              >
+                ❌ Cancelar
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -5639,7 +5838,6 @@ function TaxiForm() {
           </div>
         </div>
       )}
-
       {/* Modal de voucher */}
       {modalVoucher.open && (
         <div style={{
@@ -5673,6 +5871,66 @@ function TaxiForm() {
             }}>
               🎫 Generar Voucher Corporativo
             </h3>
+            
+            {/* Información del operador y número de autorización */}
+            <div style={{
+              background: '#f3f4f6',
+              padding: '15px',
+              borderRadius: '8px',
+              marginBottom: '20px',
+              border: '1px solid #e5e7eb'
+            }}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: '1fr 1fr',
+                gap: '15px'
+              }}>
+                <div>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '5px',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    fontSize: '12px'
+                  }}>
+                    👤 Operador
+                  </label>
+                  <div style={{
+                    padding: '8px 12px',
+                    background: 'white',
+                    borderRadius: '4px',
+                    border: '1px solid #d1d5db',
+                    fontSize: '14px',
+                    color: '#1f2937'
+                  }}>
+                    {operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador autenticado'}
+                  </div>
+                </div>
+                
+                <div>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '5px',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    fontSize: '12px'
+                  }}>
+                    🔢 N° Autorización
+                  </label>
+                  <div style={{
+                    padding: '8px 12px',
+                    background: '#3b82f6',
+                    color: 'white',
+                    borderRadius: '4px',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    textAlign: 'center'
+                  }}>
+                    {siguienteNumeroAutorizacion}
+                  </div>
+                </div>
+              </div>
+            </div>
             
             <div style={{
               display: 'grid',
@@ -5956,7 +6214,7 @@ function TaxiForm() {
               justifyContent: 'center'
             }}>
               <button
-                onClick={guardarVoucher}
+                onClick={guardarVoucherCorporativo}
                 style={{
                   padding: '12px 24px',
                   border: 'none',
@@ -6018,7 +6276,281 @@ function DashboardContent() {
     </div>
   );
 }
+function ReservasContent({ operadorAutenticado }) {
+  const [reservas, setReservas] = useState([]);
+  const [cargando, setCargando] = useState(true);
+  const [unidadAsignar, setUnidadAsignar] = useState({}); // {reservaId: valor}
+  const [mostrarAsignadas, setMostrarAsignadas] = useState(false); // filtro: false = no asignadas (por defecto), true = asignadas
 
+  useEffect(() => {
+    const q = query(collection(db, 'reservas'), orderBy('createdAt', 'desc'));
+    const unsub = onSnapshot(q, (snap) => {
+      const arr = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setReservas(arr);
+      setCargando(false);
+    }, (e) => {
+      console.error('Error cargando reservas:', e);
+      setCargando(false);
+    });
+    return () => unsub();
+  }, []);
+
+  const validarTokenConductor = (token) => token && String(token).trim().length >= 100;
+
+  const asignarUnidad = async (reserva) => {
+    try {
+      const unidad = (unidadAsignar[reserva.id] || '').trim();
+      if (!unidad) return;
+
+      // Buscar conductor por unidad
+      const conductoresQuery = query(collection(db, 'conductores'), where('unidad', '==', unidad));
+      const conductoresSnapshot = await getDocs(conductoresQuery);
+      if (conductoresSnapshot.empty) {
+        alert(`No se encontró un conductor con la unidad ${unidad}.`);
+        return;
+      }
+      const conductorData = conductoresSnapshot.docs[0].data();
+
+      // Validar estatus
+      const estatusValor = conductorData && 'estatus' in conductorData ? conductorData.estatus : true;
+      const estatusBool = typeof estatusValor === 'string' ? estatusValor.toLowerCase() !== 'false' : Boolean(estatusValor);
+      if (!estatusBool) {
+        alert(`La unidad ${unidad} está suspendida/inactiva. No se puede asignar.`);
+        return;
+      }
+
+      // Preparar documento para pedidoEnCurso
+      const coordenadasFinales = reserva.coordenadas || '-0.2298500,-78.5249500';
+      const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
+      const fecha = new Date();
+      const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+      const pedidoEnCursoData = {
+        clave,
+        codigo: reserva.nombreCliente || '',
+        nombreCliente: reserva.nombreCliente || '',
+        telefono: reserva.telefonoCompleto || reserva.telefono || '',
+        telefonoCompleto: reserva.telefonoCompleto || '',
+        direccion: reserva.direccion || '',
+        base: 'aire',
+        destino: reserva.destino || '',
+        fecha,
+        estado: 'Aceptado',
+        pedido: 'Aceptado',
+        idConductor: `conductor_${Date.now()}_${Math.random().toString(36).substring(2, 8)}@manual.com`,
+        correo: conductorData.correo || conductorData.id || '',
+        nombre: conductorData.nombre || '',
+        nombreConductor: conductorData.nombre || '',
+        placa: conductorData.placa || '',
+        color: conductorData.color || '',
+        telefonoConductor: conductorData.telefono || '',
+        foto: conductorData.foto || '',
+        tokenConductor: conductorData.token || '',
+        tiempo: '0',
+        numeroUnidad: unidad,
+        unidad: unidad,
+        minutos: 0,
+        distancia: '0.00 Mts',
+        latitudConductor: '',
+        longitudConductor: '',
+        latitud,
+        longitud,
+        latitudDestino: '',
+        longitudDestino: '',
+        sector: reserva.direccion || '',
+        tipoPedido: 'Manual',
+        valor: '',
+        central: false,
+        coorporativo: false,
+        llegue: false,
+        puerto: '3020',
+        randon: clave,
+        rango: reserva.coordenadas ? '1' : '0',
+        viajes: unidad,
+        tarifaSeleccionada: true,
+        modoSeleccion: 'manual',
+        modoAsignacion: 'manual',
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        origenReserva: true,
+        reservaId: reserva.id,
+      };
+
+      const docRef = await addDoc(collection(db, 'pedidoEnCurso'), pedidoEnCursoData);
+      await updateDoc(docRef, { id: docRef.id });
+
+      // Duplicado en NotificaciOnenCurso
+      try {
+        await addDoc(collection(db, 'NotificaciOnenCurso'), {
+          ...pedidoEnCursoData,
+          id: docRef.id,
+          fechaNotificacion: new Date(),
+          estadoNotificacion: 'pendiente'
+        });
+      } catch {}
+
+      // No borrar los datos de la reserva; opcionalmente marcar asignada
+      try {
+        await updateDoc(doc(db, 'reservas', reserva.id), {
+          estado: 'asignada',
+          unidadAsignada: unidad,
+          fechaAsignacion: new Date()
+        });
+      } catch {}
+
+      alert(`Reserva movida a En Curso con la unidad ${unidad}.`);
+    } catch (error) {
+      console.error('Error al asignar unidad a reserva:', error);
+      alert('Error al asignar unidad a la reserva.');
+    }
+  };
+
+  const formatearFecha = (date) => {
+    try {
+      const d = new Date(date?.seconds ? date.seconds * 1000 : date);
+      return d.toLocaleString('es-EC');
+    } catch {
+      return '';
+    }
+  };
+
+  // Derivados para filtro y conteos
+  const toDate = (v) => {
+    try {
+      return new Date(v?.seconds ? v.seconds * 1000 : v);
+    } catch {
+      return null;
+    }
+  };
+  const ahora = new Date();
+  const reservasAsignadas = reservas.filter(r => String(r?.estado || '').toLowerCase() === 'asignada');
+  const reservasAsignadasFuturas = reservasAsignadas.filter(r => {
+    const d = toDate(r.fechaHoraReserva);
+    return d && d >= ahora;
+  });
+  const reservasNoAsignadas = reservas.filter(r => String(r?.estado || '').toLowerCase() !== 'asignada');
+  const listaMostrada = mostrarAsignadas ? reservasAsignadasFuturas : reservasNoAsignadas;
+
+  return (
+    <div style={{ padding: 20 }}>
+      <h2 style={{ margin: '0 0 16px 0' }}>📅 Reservas</h2>
+
+      {/* Controles de filtro */}
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+  <button
+          onClick={() => setMostrarAsignadas(false)}
+          style={{
+            padding: '8px 12px',
+            borderRadius: 6,
+            border: '1px solid #d1d5db',
+            cursor: 'pointer',
+            fontWeight: 700,
+            background: !mostrarAsignadas ? '#3b82f6' : 'white',
+            color: !mostrarAsignadas ? 'white' : '#111827'
+          }}
+        >
+          No asignadas ({reservasNoAsignadas.length})
+        </button>
+        <button
+          onClick={() => setMostrarAsignadas(true)}
+          style={{
+            padding: '8px 12px',
+            borderRadius: 6,
+            border: '1px solid #d1d5db',
+            cursor: 'pointer',
+            fontWeight: 700,
+            background: mostrarAsignadas ? '#3b82f6' : 'white',
+            color: mostrarAsignadas ? 'white' : '#111827'
+          }}
+        >
+          Asignadas ({reservasAsignadasFuturas.length})
+        </button>
+      </div>
+
+      <div style={{ background: 'white', borderRadius: 8, boxShadow: '0 1px 3px rgba(0,0,0,0.1)', overflow: 'hidden' }}>
+        {cargando ? (
+          <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>Cargando reservas...</div>
+    ) : listaMostrada.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: '#6b7280' }}>
+      {mostrarAsignadas ? 'No hay reservas asignadas futuras.' : 'No hay reservas no asignadas.'}
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                  <th style={{ padding: 12, textAlign: 'left' }}>Cliente</th>
+                  <th style={{ padding: 12, textAlign: 'left' }}>Dirección</th>
+                  <th style={{ padding: 12, textAlign: 'left' }}>Destino</th>
+                  <th style={{ padding: 12, textAlign: 'left' }}>Fecha/Hora</th>
+                  <th style={{ padding: 12, textAlign: 'left' }}>Motivo</th>
+                  <th style={{ padding: 12, textAlign: 'center' }}>Unidad</th>
+                  <th style={{ padding: 12, textAlign: 'left' }}>Estado</th>
+                  <th style={{ padding: 12, textAlign: 'center' }}>Asignar Unidad</th>
+                </tr>
+              </thead>
+              <tbody>
+                {listaMostrada.map((r) => (
+                  <tr key={r.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: 12 }}>
+                      <div style={{ fontWeight: 600 }}>{r.nombreCliente}</div>
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>{r.telefono}</div>
+                    </td>
+                    <td style={{ padding: 12 }}>{r.direccion}</td>
+                    <td style={{ padding: 12 }}>{r.destino || '-'}</td>
+                    <td style={{ padding: 12 }}>{formatearFecha(r.fechaHoraReserva)}</td>
+                    <td style={{ padding: 12 }}>{r.motivo}</td>
+                    <td style={{ padding: 12, textAlign: 'center' }}>
+                      {String(r?.estado || '').toLowerCase() === 'asignada' && r.unidadAsignada ? (
+                        <span style={{ padding: '4px 8px', borderRadius: 4, background: '#eef2ff', color: '#3730a3', fontSize: 12, fontWeight: 700 }}>{r.unidadAsignada}</span>
+                      ) : (
+                        <span style={{ color: '#9ca3af' }}>—</span>
+                      )}
+                    </td>
+                    <td style={{ padding: 12 }}>
+                      <span style={{ padding: '4px 8px', borderRadius: 4, background: '#e5f9f1', color: '#059669', fontSize: 12, fontWeight: 600 }}>{r.estado}</span>
+                    </td>
+                    <td style={{ padding: 12, textAlign: 'center' }}>
+                      {String(r?.estado || '').toLowerCase() === 'asignada' ? (
+                        <div style={{
+                          display: 'inline-block',
+                          padding: '6px 10px',
+                          borderRadius: 6,
+                          background: '#f3f4f6',
+                          color: '#111827',
+                          fontWeight: 700
+                        }}>
+                          Unidad {r.unidadAsignada || '-'}
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
+                          <input
+                            type="text"
+                            placeholder="Unidad"
+                            value={unidadAsignar[r.id] || ''}
+                            onChange={(e) => setUnidadAsignar(prev => ({ ...prev, [r.id]: e.target.value }))}
+                            disabled={mostrarAsignadas}
+                            style={{ padding: '8px 10px', border: '1px solid #d1d5db', borderRadius: 6, width: 90, background: mostrarAsignadas ? '#f3f4f6' : 'white' }}
+                          />
+                          <button
+                            onClick={() => asignarUnidad(r)}
+                            disabled={mostrarAsignadas}
+                            style={{ padding: '8px 12px', background: mostrarAsignadas ? '#9ca3af' : '#10b981', color: 'white', border: 'none', borderRadius: 6, cursor: mostrarAsignadas ? 'not-allowed' : 'pointer', fontWeight: 700 }}
+                          >
+                            Asignar
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
 function ConductoresContent() {
   const [conductores, setConductores] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -6028,6 +6560,153 @@ function ConductoresContent() {
   const [searchTerm, setSearchTerm] = useState('');
   const [searchBy, setSearchBy] = useState('nombre'); // 'nombre' o 'unidad'
   const fileInputRef = useRef(null);
+
+  // Modal para cambio de estatus con motivo (Conductores)
+  const [modalCambioEstatus, setModalCambioEstatus] = useState({
+    open: false,
+    conductor: null,
+    nuevoEstatus: null,
+  motivo: '',
+  suspensionHasta: ''
+  });
+
+  const abrirModalCambioEstatus = (conductor) => {
+    setModalCambioEstatus({
+      open: true,
+      conductor,
+      nuevoEstatus: !conductor.estatus,
+      motivo: '',
+      suspensionHasta: ''
+    });
+  };
+
+  const cerrarModalCambioEstatus = () => {
+    setModalCambioEstatus({ open: false, conductor: null, nuevoEstatus: null, motivo: '', suspensionHasta: '' });
+  };
+
+  const confirmarCambioEstatus = async () => {
+    if (!modalCambioEstatus.conductor) return;
+    const { conductor, nuevoEstatus, motivo, suspensionHasta } = modalCambioEstatus;
+    if (!motivo || motivo.trim().length < 3) {
+      alert('Por favor, ingresa un motivo (mínimo 3 caracteres).');
+      return;
+    }
+    // Si es suspensión, validar fecha/hora hasta
+    let suspensionHastaDate = null;
+    if (nuevoEstatus === false) {
+      if (!suspensionHasta) {
+        alert('Por favor, indica la fecha y hora hasta cuándo estará suspendida la unidad.');
+        return;
+      }
+      const parsed = new Date(suspensionHasta);
+      if (isNaN(parsed.getTime())) {
+        alert('La fecha/hora ingresada no es válida.');
+        return;
+      }
+      suspensionHastaDate = parsed;
+    }
+
+    try {
+      // Actualizar en Firestore
+      const conductorRef = doc(db, 'conductores', conductor.id);
+      await updateDoc(conductorRef, {
+        estatus: nuevoEstatus,
+        motivoCambioEstatus: motivo.trim(),
+        fechaCambioEstatus: new Date(),
+        suspensionHasta: nuevoEstatus ? null : suspensionHastaDate
+      });
+
+      // Registrar evento en colección de auditoría: StatusUnidades (sin espacios)
+      try {
+        let changedBy = null;
+        let operadorNombre = null;
+        try {
+          const { auth } = await import('../firebaseConfig');
+          changedBy = auth?.currentUser?.email || null;
+        } catch {}
+        try {
+          const almacenado = localStorage.getItem('operadorAutenticado');
+          if (almacenado) {
+            const op = JSON.parse(almacenado);
+            operadorNombre = op?.nombre || null;
+          }
+        } catch {}
+
+        const accion = nuevoEstatus ? 'Activación' : 'Suspensión';
+        const registro = {
+          conductorId: conductor.id,
+          unidad: conductor.unidad || conductor.numeroUnidad || null,
+          nombre: conductor.nombre || '',
+          placa: conductor.placa || '',
+          color: conductor.color || '',
+          estado: nuevoEstatus ? 'Activo' : 'Inactivo',
+          estatus: Boolean(nuevoEstatus),
+          motivo: motivo.trim(),
+          accion,
+          fecha: new Date(),
+          suspensionHasta: suspensionHastaDate || null,
+          changedBy,
+          operadorNombre
+        };
+        await addDoc(collection(db, 'StatusUnidades'), registro);
+      } catch (eLog) {
+        console.warn('No se pudo registrar cambio en StatusUnidades:', eLog);
+      }
+
+      // Actualizar estado local
+      setConductores(prev => prev.map(c => c.id === conductor.id ? { ...c, estatus: nuevoEstatus } : c));
+
+      // Enviar notificación a API externa (no bloqueante)
+      try {
+        const apiUrl = process.env.REACT_APP_ESTATUS_API_URL || 'http://84.46.245.131:3001/send/group/message';
+        const groupTo = process.env.REACT_APP_GROUP_TO_ID || '120363343871245265';
+        const accion = nuevoEstatus ? 'Activación' : 'Suspensión';
+        // Obtener operador autenticado (nombre desde localStorage o email desde auth)
+        let operadorStr = '';
+        try {
+          const almacenado = localStorage.getItem('operadorAutenticado');
+          if (almacenado) {
+            const op = JSON.parse(almacenado);
+            if (op?.nombre) operadorStr = op.nombre;
+          }
+        } catch {}
+        if (!operadorStr) {
+          try {
+            const { auth } = await import('../firebaseConfig');
+            operadorStr = auth?.currentUser?.email || '';
+          } catch {}
+        }
+        const operadorTexto = operadorStr ? ` por ${operadorStr}` : '';
+
+        let hastaTexto = '';
+        if (!nuevoEstatus && suspensionHastaDate instanceof Date) {
+          const dd = String(suspensionHastaDate.getDate()).padStart(2, '0');
+          const mm = String(suspensionHastaDate.getMonth() + 1).padStart(2, '0');
+          const yyyy = suspensionHastaDate.getFullYear();
+          const hh = String(suspensionHastaDate.getHours()).padStart(2, '0');
+          const min = String(suspensionHastaDate.getMinutes()).padStart(2, '0');
+          // Fecha y hora por separado en el mensaje
+          hastaTexto = ` Hasta: Fecha ${dd}-${mm}-${yyyy}. Hora ${hh}:${min}`;
+        }
+
+        const mensaje = `Unidad ${conductor.unidad || conductor.numeroUnidad || ''} - ${conductor.nombre || ''}: ${accion}${operadorTexto}. Motivo: ${motivo.trim()}.${hastaTexto}`;
+
+        await fetch(apiUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({ to: groupTo, message: mensaje }).toString()
+        });
+      } catch (errApi) {
+        console.warn('No se pudo enviar el mensaje a la API externa:', errApi);
+      }
+
+      cerrarModalCambioEstatus();
+      alert(`✅ Estatus ${nuevoEstatus ? 'activado' : 'suspendido'} correctamente`);
+    } catch (error) {
+      console.error('❌ Error al cambiar estatus:', error);
+      alert('❌ Error al cambiar el estatus del conductor');
+    }
+  };
 
   const fetchConductores = async () => {
     setLoading(true);
@@ -6489,7 +7168,6 @@ function ConductoresContent() {
       alert(`❌ ${mensaje}\n\nCódigo de error: ${error.code}\n\nVerifica:\n1. Reglas de Storage\n2. Dominios autorizados\n3. Configuración del proyecto`);
     }
   };
-
   return (
     <div style={{ padding: 20 }}>
       <h2 style={{ marginBottom: 20 }}>Gestión de Conductores</h2>
@@ -6801,7 +7479,7 @@ function ConductoresContent() {
                     <button onClick={handleCancel} style={{ background: '#ef4444', color: 'white', border: 'none', borderRadius: 6, padding: '14px 0', width: 120, fontWeight: 'bold', cursor: 'pointer', fontSize: 17 }}>Cancelar</button>
                     <button
                       type="button"
-                      onClick={() => handleToggleEstatusDirecto(conductor, idx)}
+                      onClick={() => abrirModalCambioEstatus(conductor)}
                       style={{
                         background: conductor.estatus ? '#10b981' : '#ef4444',
                         color: 'white',
@@ -6839,7 +7517,7 @@ function ConductoresContent() {
                     </button>
                     <button
                       type="button"
-                      onClick={() => handleToggleEstatusDirecto(conductor, idx)}
+                      onClick={() => abrirModalCambioEstatus(conductor)}
                       style={{
                         background: conductor.estatus ? '#10b981' : '#ef4444',
                         color: 'white',
@@ -7145,7 +7823,7 @@ function ConductoresContent() {
                               ✏️ Editar
                             </button>
                             <button
-                              onClick={() => handleToggleEstatusDirecto(conductor, idx)}
+                              onClick={() => abrirModalCambioEstatus(conductor)}
                               style={{
                                 background: conductor.estatus ? '#ef4444' : '#10b981',
                                 color: 'white',
@@ -7185,10 +7863,111 @@ function ConductoresContent() {
           </div>
         </div>
       )}
+
+      {/* Modal para confirmar cambio de estatus con motivo */}
+      {modalCambioEstatus.open && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: 24,
+            borderRadius: 12,
+            boxShadow: '0 10px 25px rgba(0,0,0,0.15)',
+            width: '520px',
+            maxWidth: '90vw'
+          }}>
+            <h3 style={{ marginTop: 0, marginBottom: 12, fontSize: 20, color: '#111827' }}>
+              Cambiar estado de la unidad
+            </h3>
+            <p style={{ marginTop: 0, marginBottom: 16, color: '#374151' }}>
+              {`Vas a ${modalCambioEstatus.nuevoEstatus ? 'activar' : 'suspender'} `}
+              <strong>
+                {modalCambioEstatus.conductor?.unidad ? `Unidad ${modalCambioEstatus.conductor.unidad}` : 'la unidad'}
+              </strong>
+              {modalCambioEstatus.conductor?.nombre ? ` (${modalCambioEstatus.conductor.nombre})` : ''}.
+            </p>
+            <label style={{ display: 'block', fontWeight: 'bold', color: '#374151', marginBottom: 6 }}>
+              📝 Motivo
+            </label>
+            <textarea
+              value={modalCambioEstatus.motivo}
+              onChange={(e) => setModalCambioEstatus(prev => ({ ...prev, motivo: e.target.value }))}
+              rows={3}
+              placeholder={`Describe el motivo de la ${modalCambioEstatus.nuevoEstatus ? 'activación' : 'suspensión'} (mínimo 3 caracteres)`}
+              style={{
+                width: '100%',
+                padding: 10,
+                border: '1px solid #d1d5db',
+                borderRadius: 8,
+                fontSize: 14,
+                resize: 'vertical',
+                marginBottom: 16
+              }}
+            />
+            {!modalCambioEstatus.nuevoEstatus && (
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontWeight: 'bold', color: '#374151', marginBottom: 6 }}>
+                  ⏰ Suspender hasta
+                </label>
+                <input
+                  type="datetime-local"
+                  value={modalCambioEstatus.suspensionHasta}
+                  onChange={(e) => setModalCambioEstatus(prev => ({ ...prev, suspensionHasta: e.target.value }))}
+                  style={{ width: '100%', padding: 10, border: '1px solid #d1d5db', borderRadius: 8, fontSize: 14 }}
+                />
+                <div style={{ fontSize: 12, color: '#6b7280', marginTop: 6 }}>
+                  Indica fecha y hora límite de la suspensión. La unidad permanecerá inactiva hasta ese momento.
+                </div>
+              </div>
+            )}
+            <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
+              <button
+                onClick={confirmarCambioEstatus}
+                style={{
+                  padding: '10px 18px',
+                  border: 'none',
+                  borderRadius: 8,
+                  backgroundColor: modalCambioEstatus.nuevoEstatus ? '#10b981' : '#ef4444',
+                  color: 'white',
+                  fontSize: 14,
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                {modalCambioEstatus.nuevoEstatus ? '✅ Activar' : '⛔ Suspender'}
+              </button>
+              <button
+                onClick={cerrarModalCambioEstatus}
+                style={{
+                  padding: '10px 18px',
+                  border: '2px solid #6b7280',
+                  borderRadius: 8,
+                  backgroundColor: 'transparent',
+                  color: '#6b7280',
+                  fontSize: 14,
+                  fontWeight: 'bold',
+                  cursor: 'pointer'
+                }}
+              >
+                ❌ Cancelar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
 function ReportesContent() {
   const [viajes, setViajes] = useState([]);
   const [fechaInicio, setFechaInicio] = useState('');
@@ -7227,22 +8006,47 @@ function ReportesContent() {
     return `${dia}-${mes}-${año}`;
   };
 
-  // Función para calcular resumen de estados
+  // Función para calcular resumen de estados (agrupado)
   const calcularResumenEstados = (viajes) => {
-    const resumen = {};
+    let completados = 0;
+    let cancelados = 0;
+
     viajes.forEach(viaje => {
-      const estado = viaje.estado || viaje.pedido || 'Sin Estado';
-      resumen[estado] = (resumen[estado] || 0) + 1;
+      const estadoRaw = (viaje.estado || viaje.pedido || '').toString().toLowerCase();
+      const tipoRaw = (viaje.tipoPedido || viaje.tipopedido || viaje.tipoViaje || '').toString().toLowerCase();
+
+      const esAceptado = estadoRaw.includes('aceptado') || estadoRaw.includes('finalizado');
+      const esAutomatico = tipoRaw.includes('auto');
+      const esCanceladoCliente = estadoRaw.includes('cancelado por cliente');
+      const esSinAsignar = estadoRaw.includes('sin asignar');
+      const esNoHuboUnidad = estadoRaw.includes('no hubo unidad');
+
+      if (esAceptado || esAutomatico) {
+        completados += 1;
+      }
+
+      if (esCanceladoCliente || esSinAsignar || esNoHuboUnidad) {
+        cancelados += 1;
+      }
     });
-    return resumen;
+
+    return {
+      'Viajes Completados': completados,
+      'Cancelados': cancelados
+    };
   };
 
-  // Función para calcular resumen de tipos de viaje
+  // Función para calcular resumen de tipos de viaje (solo Manual/Automático)
   const calcularResumenTipos = (viajes) => {
-    const resumen = {};
+    const resumen = { 'Manual': 0, 'Automático': 0 };
     viajes.forEach(viaje => {
-      const tipo = viaje.tipopedido || viaje.tipoViaje || 'Sin Tipo';
-      resumen[tipo] = (resumen[tipo] || 0) + 1;
+      const tipoRaw = (viaje.tipoPedido || viaje.tipopedido || viaje.tipoViaje || 'sin tipo').toString().toLowerCase();
+      if (tipoRaw.includes('auto')) {
+        resumen['Automático'] += 1;
+      } else {
+        // Todo lo demás, incluyendo "sin tipo", se considera Manual
+        resumen['Manual'] += 1;
+      }
     });
     return resumen;
   };
@@ -7278,12 +8082,12 @@ function ReportesContent() {
               
               // Solo incluir si está dentro del rango de horas
               if (horaViaje >= horaInicio && horaViaje <= horaFin) {
-                const viaje = {
-                  id: doc.id,
-                  fecha: formatearFechaParaReporte(fecha),
+            const viaje = {
+              id: doc.id,
+              fecha: formatearFechaParaReporte(fecha),
                   ...viajeData
-                };
-                todosLosViajes.push(viaje);
+            };
+            todosLosViajes.push(viaje);
                 console.log('📄 Viaje encontrado:', doc.id, viaje.nombreCliente || viaje.nombre, 'hora:', horaViaje);
               }
             } else {
@@ -7336,13 +8140,13 @@ function ReportesContent() {
                   const horaViaje = fechaViaje.getHours().toString().padStart(2, '0') + ':' + fechaViaje.getMinutes().toString().padStart(2, '0');
                   
                   if (horaViaje >= horaInicio && horaViaje <= horaFin) {
-                    const fechaFormateada = formatearFechaParaReporte(fechaViaje);
-                    const viajeFormateado = {
-                      id: doc.id,
-                      fecha: fechaFormateada,
-                      ...viaje
-                    };
-                    todosLosViajes.push(viajeFormateado);
+                const fechaFormateada = formatearFechaParaReporte(fechaViaje);
+                const viajeFormateado = {
+                  id: doc.id,
+                  fecha: fechaFormateada,
+                  ...viaje
+                };
+                todosLosViajes.push(viajeFormateado);
                     console.log('📄 Viaje disponible encontrado:', doc.id, viaje.nombreCliente || viaje.nombre, 'hora:', horaViaje);
                   }
                 }
@@ -7370,13 +8174,13 @@ function ReportesContent() {
                 const horaViaje = fechaViaje.getHours().toString().padStart(2, '0') + ':' + fechaViaje.getMinutes().toString().padStart(2, '0');
                 
                 if (horaViaje >= horaInicio && horaViaje <= horaFin) {
-                  const fechaFormateada = formatearFechaParaReporte(fechaViaje);
-                  const viajeFormateado = {
-                    id: doc.id,
-                    fecha: fechaFormateada,
-                    ...viaje
-                  };
-                  todosLosViajes.push(viajeFormateado);
+              const fechaFormateada = formatearFechaParaReporte(fechaViaje);
+              const viajeFormateado = {
+                id: doc.id,
+                fecha: fechaFormateada,
+                ...viaje
+              };
+              todosLosViajes.push(viajeFormateado);
                   console.log('📄 Viaje en curso encontrado:', doc.id, viaje.nombreCliente || viaje.nombre, 'hora:', horaViaje);
                 }
               }
@@ -7744,7 +8548,9 @@ function ReportesContent() {
     setFechaFin(fechaActual);
     cargarViajesPorRango(fechaActual, fechaActual);
   }, []);
-
+  // Contadores para badges del encabezado
+  const completadosCount = (resumenEstados && resumenEstados['Viajes Completados']) ? resumenEstados['Viajes Completados'] : 0;
+  const canceladosCount = (resumenEstados && resumenEstados['Cancelados']) ? resumenEstados['Cancelados'] : 0;
   return (
     <div style={{ padding: 20 }}>
       <div style={{ marginBottom: 30 }}>
@@ -7756,6 +8562,38 @@ function ReportesContent() {
         }}>
           📊 Reportes del Sistema
         </h2>
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', margin: '6px 0 10px 0', alignItems: 'center' }}>
+          <span style={{
+            background: canceladosCount > 0 ? '#ef4444' : '#2563eb',
+            color: 'white',
+            borderRadius: '9999px',
+            padding: '6px 10px',
+            fontSize: '12px',
+            fontWeight: 'bold'
+          }}>
+            Total: {viajes.length}
+          </span>
+          <span style={{
+            background: '#10b981',
+            color: 'white',
+            borderRadius: '9999px',
+            padding: '6px 10px',
+            fontSize: '12px',
+            fontWeight: 'bold'
+          }}>
+            Completados: {completadosCount}
+          </span>
+          <span style={{
+            background: '#ef4444',
+            color: 'white',
+            borderRadius: '9999px',
+            padding: '6px 10px',
+            fontSize: '12px',
+            fontWeight: 'bold'
+          }}>
+            Cancelados: {canceladosCount}
+          </span>
+        </div>
         <p style={{ 
           margin: '0 0 20px 0', 
           color: '#6b7280',
@@ -8085,102 +8923,49 @@ function ReportesContent() {
                       background: '#f8fafc',
                       borderBottom: '2px solid #e5e7eb'
                     }}>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        👤 Cliente
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        🚗 Vehículo
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        📍 Origen
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        🎯 Destino
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        💰 Valor
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        ⏱️ Tiempo
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        📱 Teléfono
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        👨‍💼 Conductor
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        🏷️ Estado
-                      </th>
-                      <th style={{
-                        padding: '15px 12px',
-                        textAlign: 'left',
-                        fontWeight: 'bold',
-                        color: '#374151',
-                        borderBottom: '1px solid #e5e7eb'
-                      }}>
-                        📅 Fecha
-                      </th>
+                      {[
+                        '📅 Fecha',
+                        '📱 Teléfono',
+                        '📍 Dirección',
+                        '🗺️ Sector',
+                        '👨‍💼 Nombre',
+                        '👤 Cliente',
+                        '🚖 Tipo Pedido',
+                        '🔢 Unidad',
+                        '💰 Valor',
+                        '🏷️ Estado'
+                      ].map((titulo) => (
+                        <th key={titulo} style={{
+                          padding: '15px 12px',
+                          textAlign: 'left',
+                          fontWeight: 'bold',
+                          color: '#374151',
+                          borderBottom: '1px solid #e5e7eb'
+                        }}>
+                          {titulo}
+                        </th>
+                      ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {viajes.map((viaje, index) => {
+                    {viajes.map((viaje) => {
                       const estadoInfo = obtenerEstadoConColor(viaje.estado || viaje.pedido);
-                      
+                      const estadoTexto = ((viaje.estado || viaje.pedido || '') + '').toLowerCase();
+                      const esSinUnidad = /sin asignar|no hubo unidad/.test(estadoTexto);
+                      // Derivados con tolerancia a variantes de nombres de campo
+                      const telefono = viaje.telefono || viaje.telefonoCompleto || 'N/A';
+                      const direccion = viaje.direccion || 'N/A';
+                      const sector = viaje.sector || viaje.direccion || 'N/A';
+                      const nombre = viaje.nombre || 'N/A';
+                      const nombreCliente = viaje.nombreCliente || viaje.codigo || 'N/A';
+                      const tipoPedido = viaje.tipoPedido || viaje.tipopedido || viaje.tipoViaje || 'Sin Tipo';
+                      const unidad = esSinUnidad ? '0' : (viaje.numeroUnidad || viaje.unidad || viaje.viajes || 'N/A');
+                      const valorMostrar = formatearValor(viaje.valor || viaje.montoTotalCalculado || 0);
+                      const fechaMostrada = (() => {
+                        const fm = formatearFechaMostrar(viaje.fecha);
+                        return (fm === 'N/A' && typeof viaje.fecha === 'string') ? viaje.fecha : fm;
+                      })();
+
                       return (
                         <tr key={viaje.id} style={{
                           borderBottom: '1px solid #f3f4f6',
@@ -8196,65 +8981,16 @@ function ReportesContent() {
                           e.currentTarget.style.background = viaje.esVoucher ? '#fef3c7' : 
                                                            viaje.esViajeFinalizado ? '#dbeafe' : 'white';
                         }}>
-                          <td style={{
-                            padding: '12px',
-                            color: '#1f2937',
-                            fontWeight: '500'
-                          }}>
-                            {viaje.nombreCliente || viaje.nombre || 'N/A'}
-                          </td>
-                          <td style={{
-                            padding: '12px',
-                            color: '#6b7280',
-                            fontSize: '13px'
-                          }}>
-                            {viaje.placa || 'Sin placa'} • {viaje.clave || viaje.viajes || 'N/A'}
-                          </td>
-                          <td style={{
-                            padding: '12px',
-                            color: '#374151',
-                            maxWidth: '200px',
-                            wordWrap: 'break-word'
-                          }}>
-                            {viaje.direccion || 'N/A'}
-                          </td>
-                          <td style={{
-                            padding: '12px',
-                            color: '#374151',
-                            maxWidth: '200px',
-                            wordWrap: 'break-word'
-                          }}>
-                            {viaje.destino || 'N/A'}
-                          </td>
-                          <td style={{
-                            padding: '12px',
-                            color: '#059669',
-                            fontWeight: 'bold'
-                          }}>
-                            {formatearValor(viaje.valor || viaje.montoTotalCalculado)}
-                          </td>
-                          <td style={{
-                            padding: '12px',
-                            color: '#374151'
-                          }}>
-                            {formatearTiempo(viaje.tiempoTotal, viaje.minutos)}
-                          </td>
-                          <td style={{
-                            padding: '12px',
-                            color: '#374151',
-                            fontFamily: 'monospace'
-                          }}>
-                            {viaje.telefono || 'N/A'}
-                          </td>
-                          <td style={{
-                            padding: '12px',
-                            color: '#374151'
-                          }}>
-                            {viaje.nombre || viaje.codigo || viaje.idConductor || 'N/A'}
-                          </td>
-                          <td style={{
-                            padding: '12px'
-                          }}>
+                          <td style={{ padding: '12px', color: '#6b7280', fontSize: '13px' }}>{fechaMostrada}</td>
+                          <td style={{ padding: '12px', color: '#374151', fontFamily: 'monospace' }}>{telefono}</td>
+                          <td style={{ padding: '12px', color: '#374151', maxWidth: '240px', wordWrap: 'break-word' }}>{direccion}</td>
+                          <td style={{ padding: '12px', color: '#374151', maxWidth: '240px', wordWrap: 'break-word' }}>{sector}</td>
+                          <td style={{ padding: '12px', color: '#374151' }}>{nombre}</td>
+                          <td style={{ padding: '12px', color: '#1f2937', fontWeight: 500 }}>{nombreCliente}</td>
+                          <td style={{ padding: '12px', color: '#374151' }}>{tipoPedido}</td>
+                          <td style={{ padding: '12px', color: '#374151' }}>{unidad}</td>
+                          <td style={{ padding: '12px', color: '#059669', fontWeight: 'bold' }}>{valorMostrar}</td>
+                          <td style={{ padding: '12px' }}>
                             <span style={{
                               background: estadoInfo.color,
                               color: 'white',
@@ -8266,13 +9002,6 @@ function ReportesContent() {
                             }}>
                               {estadoInfo.texto}
                             </span>
-                          </td>
-                          <td style={{
-                            padding: '12px',
-                            color: '#6b7280',
-                            fontSize: '13px'
-                          }}>
-                            {formatearFechaMostrar(viaje.fecha)}
                           </td>
                         </tr>
                       );
@@ -8287,7 +9016,6 @@ function ReportesContent() {
     </div>
   );
 }
-
 function OperadoresContent() {
   const [operadores, setOperadores] = useState([]);
   const [cargandoOperadores, setCargandoOperadores] = useState(false);
@@ -8372,7 +9100,7 @@ function OperadoresContent() {
 
   // Eliminar operador
   const eliminarOperador = async (operadorId) => {
-    if (confirm('¿Está seguro de que desea eliminar este operador?')) {
+    if (window.confirm('¿Está seguro de que desea eliminar este operador?')) {
       try {
         await deleteDoc(doc(db, 'operadores', operadorId));
         cargarOperadores();
@@ -8671,21 +9399,738 @@ function OperadoresContent() {
   );
 }
 
-function VouchersContent() {
+function VouchersContent({ operadorAutenticado }) {
+  const [vouchers, setVouchers] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [filtros, setFiltros] = useState({
+    empresa: '',
+    fechaInicio: '',
+    fechaFin: '',
+    numeroAutorizacion: ''
+  });
+  const [voucherSeleccionado, setVoucherSeleccionado] = useState(null);
+  const [mostrarModal, setMostrarModal] = useState(false);
+  const [siguienteNumeroAutorizacion, setSiguienteNumeroAutorizacion] = useState(40000);
+
+  // Cargar vouchers
+  const cargarVouchers = async () => {
+    try {
+      setLoading(true);
+      const vouchersRef = collection(db, 'voucherCorporativos');
+      const q = query(vouchersRef, orderBy('fechaCreacion', 'desc'));
+      const querySnapshot = await getDocs(q);
+      
+      const vouchersData = querySnapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      setVouchers(vouchersData);
+    } catch (error) {
+      console.error('Error al cargar vouchers:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Aplicar filtros
+  const aplicarFiltros = () => {
+    return vouchers.filter(voucher => {
+      const cumpleEmpresa = !filtros.empresa || 
+        voucher.empresa?.toLowerCase().includes(filtros.empresa.toLowerCase());
+      
+      const cumpleNumeroAutorizacion = !filtros.numeroAutorizacion || 
+        voucher.numeroAutorizacion?.toString().includes(filtros.numeroAutorizacion);
+      
+      let cumpleFecha = true;
+      if (filtros.fechaInicio && voucher.fechaCreacion) {
+        const fechaVoucher = voucher.fechaCreacion.toDate ? 
+          voucher.fechaCreacion.toDate() : new Date(voucher.fechaCreacion);
+        const fechaInicio = new Date(filtros.fechaInicio);
+        cumpleFecha = fechaVoucher >= fechaInicio;
+      }
+      
+      if (filtros.fechaFin && voucher.fechaCreacion) {
+        const fechaVoucher = voucher.fechaCreacion.toDate ? 
+          voucher.fechaCreacion.toDate() : new Date(voucher.fechaCreacion);
+        const fechaFin = new Date(filtros.fechaFin);
+        cumpleFecha = cumpleFecha && fechaVoucher <= fechaFin;
+      }
+      
+      return cumpleEmpresa && cumpleNumeroAutorizacion && cumpleFecha;
+    });
+  };
+
+  // Formatear fecha
+  const formatearFecha = (fecha) => {
+    if (!fecha) return 'N/A';
+    if (fecha.toDate) {
+      return fecha.toDate().toLocaleString('es-EC');
+    }
+    return new Date(fecha).toLocaleString('es-EC');
+  };
+
+  // Obtener color del estado
+  const obtenerColorEstado = (estado) => {
+    switch (estado) {
+      case 'Activo': return '#10b981';
+      case 'Cancelado': return '#ef4444';
+      case 'Finalizado': return '#3b82f6';
+      default: return '#6b7280';
+    }
+  };
+
+  // Ver detalles del voucher
+  const verDetalles = (voucher) => {
+    setVoucherSeleccionado(voucher);
+    setMostrarModal(true);
+  };
+
+  // Cerrar modal
+  const cerrarModal = () => {
+    setVoucherSeleccionado(null);
+    setMostrarModal(false);
+  };
+
+
+
+  // Cargar datos al montar el componente
+  useEffect(() => {
+    cargarVouchers();
+    obtenerSiguienteNumeroAutorizacion();
+  }, []);
+
+  // Función para obtener el siguiente número de autorización
+  const obtenerSiguienteNumeroAutorizacion = async () => {
+    try {
+      const vouchersRef = collection(db, 'voucherCorporativos');
+      const q = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
+      const querySnapshot = await getDocs(q);
+      
+      if (!querySnapshot.empty) {
+        const ultimoVoucher = querySnapshot.docs[0].data();
+        const siguienteNumero = Math.max(40000, (ultimoVoucher.numeroAutorizacion || 39999) + 1);
+        setSiguienteNumeroAutorizacion(siguienteNumero);
+      } else {
+        setSiguienteNumeroAutorizacion(40000);
+      }
+    } catch (error) {
+      console.error('Error al obtener número de autorización:', error);
+      setSiguienteNumeroAutorizacion(40000);
+    }
+  };
+
+  const vouchersFiltrados = aplicarFiltros();
+
   return (
     <div style={{ padding: 20 }}>
-      <h2>Gestión de Vouchers</h2>
-      <p>Administra los vouchers y comprobantes del sistema.</p>
+      <div style={{ marginBottom: 20 }}>
+        <h2 style={{ margin: '0 0 10px 0', color: '#1f2937' }}>Gestión de Vouchers</h2>
+        <p style={{ margin: 0, color: '#6b7280' }}>Administra los vouchers corporativos del sistema.</p>
+        {operadorAutenticado && (
+          <div style={{
+            marginTop: '10px',
+            padding: '8px 12px',
+            background: '#f3f4f6',
+            borderRadius: '6px',
+            border: '1px solid #e5e7eb',
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <span style={{ fontSize: '14px', color: '#374151' }}>👤 Operador:</span>
+            <span style={{ 
+              fontSize: '14px', 
+              fontWeight: '600', 
+              color: '#1f2937',
+              background: '#3b82f6',
+              color: 'white',
+              padding: '4px 8px',
+              borderRadius: '4px'
+            }}>
+              {operadorAutenticado.nombre}
+            </span>
+          </div>
+        )}
+      </div>
+
+      {/* Resumen Superior */}
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '1fr 1fr',
+        gap: '20px',
+        marginBottom: '20px'
+      }}>
+        {/* Total de Vouchers */}
+        <div style={{
+          background: 'white',
+          padding: '20px',
+          borderRadius: '8px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          textAlign: 'center'
+        }}>
+          <div style={{
+            fontSize: '32px',
+            fontWeight: 'bold',
+            color: '#3b82f6',
+            marginBottom: '8px'
+          }}>
+            {vouchersFiltrados.length}
+          </div>
+          <div style={{
+            fontSize: '14px',
+            color: '#6b7280',
+            fontWeight: '500'
+          }}>
+            Total de Vouchers
+          </div>
+        </div>
+
+        {/* Valor Total */}
+        <div style={{
+          background: 'white',
+          padding: '20px',
+          borderRadius: '8px',
+          boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+          textAlign: 'center'
+        }}>
+          <div style={{
+            fontSize: '32px',
+            fontWeight: 'bold',
+            color: '#f59e0b',
+            marginBottom: '8px'
+          }}>
+            ${vouchersFiltrados.reduce((total, voucher) => {
+              const valor = parseFloat(voucher.valor) || 0;
+              return total + valor;
+            }, 0).toFixed(2)}
+          </div>
+          <div style={{
+            fontSize: '14px',
+            color: '#6b7280',
+            fontWeight: '500'
+          }}>
+            Valor Total
+          </div>
+        </div>
+      </div>
+
+      {/* Filtros */}
+      <div style={{
+        background: 'white',
+        padding: '20px',
+        borderRadius: '8px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+        marginBottom: '20px'
+      }}>
+        <h3 style={{ margin: '0 0 15px 0', fontSize: '16px', color: '#374151' }}>Filtros</h3>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '15px' }}>
+          <div>
+            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', color: '#374151' }}>
+              Empresa
+            </label>
+            <input
+              type="text"
+              value={filtros.empresa}
+              onChange={(e) => setFiltros(prev => ({ ...prev, empresa: e.target.value }))}
+              placeholder="Buscar por empresa..."
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                fontSize: '14px'
+              }}
+            />
+          </div>
+          
+          <div>
+            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', color: '#374151' }}>
+              N° Autorización
+            </label>
+            <input
+              type="text"
+              value={filtros.numeroAutorizacion}
+              onChange={(e) => setFiltros(prev => ({ ...prev, numeroAutorizacion: e.target.value }))}
+              placeholder="Buscar por número..."
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                fontSize: '14px'
+              }}
+            />
+          </div>
+          
+          <div>
+            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', color: '#374151' }}>
+              Fecha Inicio
+            </label>
+            <input
+              type="date"
+              value={filtros.fechaInicio}
+              onChange={(e) => setFiltros(prev => ({ ...prev, fechaInicio: e.target.value }))}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                fontSize: '14px'
+              }}
+            />
+          </div>
+          
+          <div>
+            <label style={{ display: 'block', marginBottom: '5px', fontSize: '14px', color: '#374151' }}>
+              Fecha Fin
+            </label>
+            <input
+              type="date"
+              value={filtros.fechaFin}
+              onChange={(e) => setFiltros(prev => ({ ...prev, fechaFin: e.target.value }))}
+              style={{
+                width: '100%',
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '4px',
+                fontSize: '14px'
+              }}
+            />
+          </div>
+        </div>
+        
+        <div style={{ marginTop: '15px', display: 'flex', gap: '10px' }}>
+          <button
+            onClick={() => setFiltros({
+              empresa: '',
+              fechaInicio: '',
+              fechaFin: '',
+              numeroAutorizacion: ''
+            })}
+            style={{
+              padding: '8px 16px',
+              background: '#6b7280',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            Limpiar Filtros
+          </button>
+          
+          <button
+            onClick={cargarVouchers}
+            style={{
+              padding: '8px 16px',
+              background: '#3b82f6',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            🔄 Actualizar
+          </button>
+          
+          <button
+            onClick={() => {
+              const vouchersFiltrados = aplicarFiltros();
+              
+              // Crear datos para XLSX
+              const headers = [
+                'N° Autorización',
+                'Cliente',
+                'Teléfono',
+                'Empresa',
+                'Operador',
+                'Dirección',
+                'Destino',
+                'Unidad',
+                'Estado',
+                'Valor',
+                'Fecha'
+              ];
+              
+              // Crear array de datos para XLSX
+              const excelData = [
+                headers,
+                ...vouchersFiltrados.map(voucher => [
+                  voucher.numeroAutorizacion,
+                  voucher.nombreCliente,
+                  voucher.telefono,
+                  voucher.empresa,
+                  voucher.operadora || 'Sin operador',
+                  voucher.direccion,
+                  voucher.destino,
+                  voucher.numeroUnidad,
+                  voucher.estado,
+                  voucher.valor,
+                  formatearFecha(voucher.fechaCreacion)
+                ])
+              ];
+              
+              // Crear workbook y worksheet
+              const wb = XLSX.utils.book_new();
+              const ws = XLSX.utils.aoa_to_sheet(excelData);
+              
+              // Ajustar ancho de columnas
+              const colWidths = [
+                { wch: 15 }, // N° Autorización
+                { wch: 20 }, // Cliente
+                { wch: 15 }, // Teléfono
+                { wch: 20 }, // Empresa
+                { wch: 30 }, // Dirección
+                { wch: 25 }, // Destino
+                { wch: 10 }, // Unidad
+                { wch: 12 }, // Estado
+                { wch: 12 }, // Valor
+                { wch: 20 }  // Fecha
+              ];
+              ws['!cols'] = colWidths;
+              
+              // Agregar worksheet al workbook
+              XLSX.utils.book_append_sheet(wb, ws, 'Vouchers');
+              
+              // Generar archivo XLSX
+              const xlsxBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+              const blob = new Blob([xlsxBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+              
+              // Descargar archivo
+              const link = document.createElement('a');
+              const url = URL.createObjectURL(blob);
+              link.href = url;
+              link.download = `vouchers_${new Date().toISOString().split('T')[0]}.xlsx`;
+              link.style.visibility = 'hidden';
+              document.body.appendChild(link);
+              link.click();
+              // Cleanup safely in next tick to avoid DOM removal race conditions
+              setTimeout(() => {
+                if (link.parentNode) {
+                  link.parentNode.removeChild(link);
+                }
+                try { URL.revokeObjectURL(url); } catch {}
+              }, 0);
+            }}
+            style={{
+              padding: '8px 16px',
+              background: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '14px'
+            }}
+          >
+            📊 Descargar Reporte
+          </button>
+        </div>
+      </div>
+
+
+
+      {/* Lista de Vouchers */}
+      <div style={{
+        background: 'white',
+        borderRadius: '8px',
+        boxShadow: '0 1px 3px rgba(0,0,0,0.1)',
+        overflow: 'hidden'
+      }}>
+        {loading ? (
+          <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
+            Cargando vouchers...
+          </div>
+        ) : vouchersFiltrados.length === 0 ? (
+          <div style={{ padding: '40px', textAlign: 'center', color: '#6b7280' }}>
+            No se encontraron vouchers con los filtros aplicados.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: '#f9fafb', borderBottom: '1px solid #e5e7eb' }}>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    N° Autorización
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Cliente
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Teléfono
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Empresa
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Operador
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Dirección
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Destino
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Unidad
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Estado
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Valor
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'left', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Fecha
+                  </th>
+                  <th style={{ padding: '12px', textAlign: 'center', fontSize: '14px', fontWeight: '600', color: '#374151' }}>
+                    Acciones
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {vouchersFiltrados.map((voucher) => (
+                  <tr key={voucher.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
+                    <td style={{ padding: '12px', fontSize: '14px', fontWeight: '600', color: '#3b82f6' }}>
+                      {voucher.numeroAutorizacion}
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', fontWeight: '500', color: '#1f2937' }}>
+                      {voucher.nombreCliente}
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', color: '#374151' }}>
+                      {voucher.telefono}
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', color: '#374151' }}>
+                      {voucher.empresa}
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', color: '#374151' }}>
+                      <span style={{
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        background: '#3b82f6',
+                        color: 'white'
+                      }}>
+                        {voucher.operadora || 'Sin operador'}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', color: '#374151' }}>
+                      {voucher.direccion}
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', color: '#1f2937' }}>
+                      {voucher.destino}
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', color: '#374151' }}>
+                      {voucher.numeroUnidad}
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px' }}>
+                      <span style={{
+                        padding: '4px 8px',
+                        borderRadius: '4px',
+                        fontSize: '12px',
+                        fontWeight: '500',
+                        background: obtenerColorEstado(voucher.estado) + '20',
+                        color: obtenerColorEstado(voucher.estado)
+                      }}>
+                        {voucher.estado}
+                      </span>
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', fontWeight: '500', color: '#059669' }}>
+                      ${voucher.valor}
+                    </td>
+                    <td style={{ padding: '12px', fontSize: '14px', color: '#6b7280' }}>
+                      {formatearFecha(voucher.fechaCreacion)}
+                    </td>
+                    <td style={{ padding: '12px', textAlign: 'center' }}>
+                      <button
+                        onClick={() => verDetalles(voucher)}
+                        style={{
+                          padding: '6px 12px',
+                          background: '#3b82f6',
+                          color: 'white',
+                          border: 'none',
+                          borderRadius: '4px',
+                          cursor: 'pointer',
+                          fontSize: '12px'
+                        }}
+                      >
+                        👁️ Ver
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* Modal de Detalles */}
+      {mostrarModal && voucherSeleccionado && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          background: 'rgba(0,0,0,0.5)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            borderRadius: '8px',
+            padding: '30px',
+            maxWidth: '600px',
+            width: '90%',
+            maxHeight: '80vh',
+            overflow: 'auto'
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+              <h3 style={{ margin: 0, color: '#1f2937' }}>Detalles del Voucher</h3>
+              <button
+                onClick={cerrarModal}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  fontSize: '24px',
+                  cursor: 'pointer',
+                  color: '#6b7280'
+                }}
+              >
+                ×
+              </button>
+            </div>
+            
+            <div style={{ display: 'grid', gap: '15px' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Cliente</label>
+                  <div style={{ fontSize: '16px', fontWeight: '500', color: '#1f2937' }}>
+                    {voucherSeleccionado.nombreCliente}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Teléfono</label>
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {voucherSeleccionado.telefono}
+                  </div>
+                </div>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Empresa</label>
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {voucherSeleccionado.empresa}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Número Autorización</label>
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {voucherSeleccionado.numeroAutorizacion}
+                  </div>
+                </div>
+              </div>
+              
+              <div>
+                <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Destino</label>
+                <div style={{ fontSize: '16px', color: '#374151' }}>
+                  {voucherSeleccionado.destino}
+                </div>
+              </div>
+              
+              <div>
+                <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Dirección</label>
+                <div style={{ fontSize: '16px', color: '#374151' }}>
+                  {voucherSeleccionado.direccion}
+                </div>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Unidad</label>
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {voucherSeleccionado.numeroUnidad}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Estado</label>
+                  <div style={{ fontSize: '16px' }}>
+                    <span style={{
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '14px',
+                      fontWeight: '500',
+                      background: obtenerColorEstado(voucherSeleccionado.estado) + '20',
+                      color: obtenerColorEstado(voucherSeleccionado.estado)
+                    }}>
+                      {voucherSeleccionado.estado}
+                    </span>
+                  </div>
+                </div>
+              </div>
+              
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Valor</label>
+                  <div style={{ fontSize: '18px', fontWeight: '600', color: '#059669' }}>
+                    ${voucherSeleccionado.valor}
+                  </div>
+                </div>
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Fecha</label>
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {formatearFecha(voucherSeleccionado.fechaCreacion)}
+                  </div>
+                </div>
+              </div>
+              
+              {voucherSeleccionado.informacionViaje && (
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Información del Viaje</label>
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {voucherSeleccionado.informacionViaje}
+                  </div>
+                </div>
+              )}
+              
+              {voucherSeleccionado.motivo && (
+                <div>
+                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Motivo</label>
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {voucherSeleccionado.motivo}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
 
 // Componente principal
-function MainContent({ activeSection }) {
+function MainContent({ activeSection, operadorAutenticado, setOperadorAutenticado, reporteDiario, setReporteDiario, authTrigger, setIsCollapsed }) {
   const renderContent = () => {
     switch (activeSection) {
       case 'dashboard':
-        return <DashboardContent />;
+        return <TaxiForm 
+          operadorAutenticado={operadorAutenticado}
+          setOperadorAutenticado={setOperadorAutenticado}
+          reporteDiario={reporteDiario}
+          setReporteDiario={setReporteDiario}
+          authTrigger={authTrigger}
+          setIsCollapsed={setIsCollapsed}
+        />;
+
       case 'conductores':
         return <ConductoresContent />;
       case 'reportes':
@@ -8693,9 +10138,18 @@ function MainContent({ activeSection }) {
       case 'operadores':
         return <OperadoresContent />;
       case 'vouchers':
-        return <VouchersContent />;
+        return <VouchersContent operadorAutenticado={operadorAutenticado} />;
+      case 'reservas':
+        return <ReservasContent operadorAutenticado={operadorAutenticado} />;
       default:
-        return <DashboardContent />;
+        return <TaxiForm 
+          operadorAutenticado={operadorAutenticado}
+          setOperadorAutenticado={setOperadorAutenticado}
+          reporteDiario={reporteDiario}
+          setReporteDiario={setReporteDiario}
+          authTrigger={authTrigger}
+          setIsCollapsed={setIsCollapsed}
+        />;
     }
   };
 
@@ -8714,6 +10168,3 @@ function MainContent({ activeSection }) {
 }
 
 export default MainContent; 
-
-
-

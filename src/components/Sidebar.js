@@ -1,12 +1,13 @@
 import React from 'react';
 
-function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed }) {
+function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed, cerrarSesionGeneral }) {
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
     { id: 'conductores', label: 'Conductores', icon: '👨‍💼' },
     { id: 'reportes', label: 'Reportes', icon: '📈' },
     { id: 'operadores', label: 'Operadores', icon: '👥' },
-    { id: 'vouchers', label: 'Vouchers', icon: '🧾' }
+  { id: 'reservas', label: 'Reservas', icon: '📅' },
+  { id: 'vouchers', label: 'Vouchers', icon: '🧾' }
   ];
 
   return (
@@ -92,6 +93,38 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed 
           </div>
         ))}
       </nav>
+
+      {/* Botón de cerrar sesión en la parte inferior */}
+      <div style={{
+        padding: '20px',
+        borderTop: '1px solid #374151',
+        marginTop: 'auto'
+      }}>
+        <button
+          onClick={cerrarSesionGeneral}
+          style={{
+            width: '100%',
+            padding: '12px',
+            background: '#dc2626',
+            color: 'white',
+            border: 'none',
+            borderRadius: '6px',
+            cursor: 'pointer',
+            fontSize: '14px',
+            fontWeight: '500',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: '8px',
+            transition: 'background-color 0.2s'
+          }}
+          onMouseEnter={(e) => e.target.style.background = '#b91c1c'}
+          onMouseLeave={(e) => e.target.style.background = '#dc2626'}
+        >
+          <span>🔌</span>
+          {!isCollapsed && <span>Cerrar Sesión</span>}
+        </button>
+      </div>
     </div>
   );
 }
