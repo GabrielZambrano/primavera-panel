@@ -8700,6 +8700,115 @@ function ReportesContent() {
           >
             🔍 Buscar
           </button>
+
+          {/* Exportar a Excel (Reporte de Viajes) */}
+          <button
+            onClick={() => {
+              try {
+                const headers = [
+                  'Fecha',
+                  'Teléfono',
+                  'Dirección',
+                  'Sector',
+                  'Nombre',
+                  'Cliente',
+                  'Tipo Pedido',
+                  'Unidad',
+                  'Valor',
+                  'Rating',
+                  'Comentario',
+                  'Estado'
+                ];
+
+                const rows = viajes.map((viaje) => {
+                  const estadoTexto = ((viaje.estado || viaje.pedido || '') + '').toLowerCase();
+                  const esSinUnidad = /sin asignar|no hubo unidad/.test(estadoTexto);
+                  const telefono = viaje.telefono || viaje.telefonoCompleto || '';
+                  const direccion = viaje.direccion || '';
+                  const sector = viaje.sector || viaje.direccion || '';
+                  const nombre = viaje.nombre || '';
+                  const nombreCliente = viaje.nombreCliente || viaje.codigo || '';
+                  const tipoPedido = viaje.tipoPedido || viaje.tipopedido || viaje.tipoViaje || '';
+                  const unidad = esSinUnidad ? '0' : (viaje.numeroUnidad || viaje.unidad || viaje.viajes || '');
+                  const valorMostrar = (viaje.valor || viaje.montoTotalCalculado) ? (Number(viaje.valor || viaje.montoTotalCalculado) || 0).toFixed(2) : '0.00';
+                  const fechaMostrar = (() => {
+                    const fm = formatearFechaMostrar(viaje.fecha);
+                    return (fm === 'N/A' && typeof viaje.fecha === 'string') ? viaje.fecha : fm;
+                  })();
+
+                  const ratingRaw = (viaje?.rating ?? viaje?.calificacion ?? viaje?.puntuacion ?? viaje?.valoracion ?? viaje?.evaluacion ?? (viaje?.feedback && (viaje.feedback.rating ?? viaje.feedback.calificacion ?? viaje.feedback.puntuacion)));
+                  const ratingNum = Number(ratingRaw);
+                  const ratingOut = !isNaN(ratingNum) && ratingNum > 0 ? `${Math.max(1, Math.min(5, Math.round(ratingNum)))}` : '';
+                  const comentarioOut = (viaje?.comment ?? viaje?.comentario ?? viaje?.comentarios ?? viaje?.observacion ?? viaje?.observaciones ?? (viaje?.feedback && (viaje.feedback.comment ?? viaje.feedback.comentario ?? viaje.feedback.observacion))) || '';
+                  const estadoOut = (viaje.estado || viaje.pedido || '') + '';
+
+                  return [
+                    fechaMostrar,
+                    telefono,
+                    direccion,
+                    sector,
+                    nombre,
+                    nombreCliente,
+                    tipoPedido,
+                    unidad,
+                    `$${valorMostrar}`,
+                    ratingOut,
+                    comentarioOut,
+                    estadoOut
+                  ];
+                });
+
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.aoa_to_sheet([headers, ...rows]);
+                ws['!cols'] = [
+                  { wch: 20 }, // Fecha
+                  { wch: 16 }, // Teléfono
+                  { wch: 35 }, // Dirección
+                  { wch: 25 }, // Sector
+                  { wch: 20 }, // Nombre
+                  { wch: 20 }, // Cliente
+                  { wch: 14 }, // Tipo Pedido
+                  { wch: 8 },  // Unidad
+                  { wch: 10 }, // Valor
+                  { wch: 8 },  // Rating
+                  { wch: 40 }, // Comentario
+                  { wch: 14 }  // Estado
+                ];
+                XLSX.utils.book_append_sheet(wb, ws, 'Viajes');
+                const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+                const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+                const link = document.createElement('a');
+                const url = URL.createObjectURL(blob);
+                link.href = url;
+                const hoyISO = new Date().toISOString().split('T')[0];
+                link.download = `reporte_viajes_${hoyISO}.xlsx`;
+                link.style.visibility = 'hidden';
+                document.body.appendChild(link);
+                link.click();
+                setTimeout(() => {
+                  if (link.parentNode) link.parentNode.removeChild(link);
+                  try { URL.revokeObjectURL(url); } catch {}
+                }, 0);
+              } catch (err) {
+                console.error('Error al exportar Excel:', err);
+                alert('No se pudo exportar el Excel.');
+              }
+            }}
+            style={{
+              background: '#10b981',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              padding: '10px 20px',
+              fontSize: '16px',
+              fontWeight: 'bold',
+              cursor: 'pointer'
+            }}
+            onMouseEnter={(e) => e.target.style.background = '#059669'}
+            onMouseLeave={(e) => e.target.style.background = '#10b981'}
+          >
+            📥 Exportar Excel
+          </button>
           
           {fechaInicio && fechaFin && (
             <span style={{ 
@@ -8927,13 +9036,14 @@ function ReportesContent() {
                         '📅 Fecha',
                         '📱 Teléfono',
                         '📍 Dirección',
-                        '🗺️ Sector',
                         '👨‍💼 Nombre',
                         '👤 Cliente',
-                        '🚖 Tipo Pedido',
+                        '�‍💼 Operador',
+                        '�🚖 Tipo Pedido',
                         '🔢 Unidad',
-                        '💰 Valor',
-                        '🏷️ Estado'
+                        '🏷️ Estado',
+                        '⭐ Rating',
+                        '💬 Comentario'
                       ].map((titulo) => (
                         <th key={titulo} style={{
                           padding: '15px 12px',
@@ -8955,12 +9065,19 @@ function ReportesContent() {
                       // Derivados con tolerancia a variantes de nombres de campo
                       const telefono = viaje.telefono || viaje.telefonoCompleto || 'N/A';
                       const direccion = viaje.direccion || 'N/A';
-                      const sector = viaje.sector || viaje.direccion || 'N/A';
+                      // const sector = viaje.sector || viaje.direccion || 'N/A'; // Eliminado de la tabla
                       const nombre = viaje.nombre || 'N/A';
                       const nombreCliente = viaje.nombreCliente || viaje.codigo || 'N/A';
                       const tipoPedido = viaje.tipoPedido || viaje.tipopedido || viaje.tipoViaje || 'Sin Tipo';
                       const unidad = esSinUnidad ? '0' : (viaje.numeroUnidad || viaje.unidad || viaje.viajes || 'N/A');
-                      const valorMostrar = formatearValor(viaje.valor || viaje.montoTotalCalculado || 0);
+                      // const valorMostrar = formatearValor(viaje.valor || viaje.montoTotalCalculado || 0); // Eliminado de la tabla
+                      // Feedback
+                      const ratingRaw = (viaje?.rating ?? viaje?.calificacion ?? viaje?.puntuacion ?? viaje?.valoracion ?? viaje?.evaluacion ?? (viaje?.feedback && (viaje.feedback.rating ?? viaje.feedback.calificacion ?? viaje.feedback.puntuacion)));
+                      const ratingNum = Number(ratingRaw);
+                      const ratingOut = !isNaN(ratingNum) && ratingNum > 0 ? '★'.repeat(Math.max(1, Math.min(5, Math.round(ratingNum)))) : (typeof ratingRaw === 'string' ? ratingRaw : '');
+                      const comentarioOut = (viaje?.comment ?? viaje?.comentario ?? viaje?.comentarios ?? viaje?.observacion ?? viaje?.observaciones ?? (viaje?.feedback && (viaje.feedback.comment ?? viaje.feedback.comentario ?? viaje.feedback.observacion))) || '';
+                      // Operador/operadora
+                      const operadorOut = (viaje?.operador && (viaje.operador.nombre || viaje.operador.name)) || viaje?.operadora || viaje?.operador || viaje?.operator || viaje?.atendidoPor || '';
                       const fechaMostrada = (() => {
                         const fm = formatearFechaMostrar(viaje.fecha);
                         return (fm === 'N/A' && typeof viaje.fecha === 'string') ? viaje.fecha : fm;
@@ -8984,12 +9101,12 @@ function ReportesContent() {
                           <td style={{ padding: '12px', color: '#6b7280', fontSize: '13px' }}>{fechaMostrada}</td>
                           <td style={{ padding: '12px', color: '#374151', fontFamily: 'monospace' }}>{telefono}</td>
                           <td style={{ padding: '12px', color: '#374151', maxWidth: '240px', wordWrap: 'break-word' }}>{direccion}</td>
-                          <td style={{ padding: '12px', color: '#374151', maxWidth: '240px', wordWrap: 'break-word' }}>{sector}</td>
+                          {/* Sector eliminado */}
                           <td style={{ padding: '12px', color: '#374151' }}>{nombre}</td>
                           <td style={{ padding: '12px', color: '#1f2937', fontWeight: 500 }}>{nombreCliente}</td>
+                          <td style={{ padding: '12px', color: '#374151' }}>{operadorOut || '—'}</td>
                           <td style={{ padding: '12px', color: '#374151' }}>{tipoPedido}</td>
                           <td style={{ padding: '12px', color: '#374151' }}>{unidad}</td>
-                          <td style={{ padding: '12px', color: '#059669', fontWeight: 'bold' }}>{valorMostrar}</td>
                           <td style={{ padding: '12px' }}>
                             <span style={{
                               background: estadoInfo.color,
@@ -9003,6 +9120,8 @@ function ReportesContent() {
                               {estadoInfo.texto}
                             </span>
                           </td>
+                          <td style={{ padding: '12px', color: '#374151' }}>{ratingOut || '—'}</td>
+                          <td style={{ padding: '12px', color: '#374151', maxWidth: '260px', wordWrap: 'break-word' }}>{(comentarioOut && `${comentarioOut}`.trim()) ? `${comentarioOut}` : '—'}</td>
                         </tr>
                       );
                     })}
@@ -9016,15 +9135,13 @@ function ReportesContent() {
     </div>
   );
 }
+
+// Gestión de Operadores
 function OperadoresContent() {
   const [operadores, setOperadores] = useState([]);
   const [cargandoOperadores, setCargandoOperadores] = useState(false);
   const [mostrarFormulario, setMostrarFormulario] = useState(false);
-  const [nuevoOperador, setNuevoOperador] = useState({
-    nombre: '',
-    usuario: '',
-    codigo: ''
-  });
+  const [nuevoOperador, setNuevoOperador] = useState({ nombre: '', usuario: '', codigo: '' });
   const [errorFormulario, setErrorFormulario] = useState('');
 
   // Cargar operadores
@@ -9033,10 +9150,7 @@ function OperadoresContent() {
     try {
       const operadoresRef = collection(db, 'operadores');
       const snapshot = await getDocs(operadoresRef);
-      const operadoresData = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      const operadoresData = snapshot.docs.map(docu => ({ id: docu.id, ...docu.data() }));
       setOperadores(operadoresData);
     } catch (error) {
       console.error('❌ Error al cargar operadores:', error);
@@ -9051,33 +9165,27 @@ function OperadoresContent() {
       setErrorFormulario('Todos los campos son obligatorios');
       return;
     }
-
     if (nuevoOperador.codigo.length !== 4 || !/^\d{4}$/.test(nuevoOperador.codigo)) {
       setErrorFormulario('El código debe tener exactamente 4 dígitos numéricos');
       return;
     }
-
     try {
-      // Verificar si el usuario ya existe
+      // Verificar usuario único
       const operadoresRef = collection(db, 'operadores');
-      const q = query(operadoresRef, where('usuario', '==', nuevoOperador.usuario));
-      const snapshot = await getDocs(q);
-
-      if (!snapshot.empty) {
+      const qUsuario = query(operadoresRef, where('usuario', '==', nuevoOperador.usuario));
+      const snapUsuario = await getDocs(qUsuario);
+      if (!snapUsuario.empty) {
         setErrorFormulario('El usuario ya existe');
         return;
       }
-
-      // Verificar si el código ya existe
+      // Verificar código único
       const qCodigo = query(operadoresRef, where('codigo', '==', nuevoOperador.codigo));
-      const snapshotCodigo = await getDocs(qCodigo);
-
-      if (!snapshotCodigo.empty) {
+      const snapCodigo = await getDocs(qCodigo);
+      if (!snapCodigo.empty) {
         setErrorFormulario('El código ya existe');
         return;
       }
-
-      // Crear el operador
+      // Crear
       await addDoc(collection(db, 'operadores'), {
         nombre: nuevoOperador.nombre.trim(),
         usuario: nuevoOperador.usuario.trim(),
@@ -9085,12 +9193,10 @@ function OperadoresContent() {
         fechaCreacion: new Date(),
         activo: true
       });
-
       setNuevoOperador({ nombre: '', usuario: '', codigo: '' });
       setErrorFormulario('');
       setMostrarFormulario(false);
-      cargarOperadores();
-      
+      await cargarOperadores();
       alert('✅ Operador creado exitosamente');
     } catch (error) {
       console.error('❌ Error al crear operador:', error);
@@ -9308,7 +9414,7 @@ function OperadoresContent() {
         </div>
       )}
 
-      {/* Lista de operadores */}
+  {/* Lista de operadores */}
       <div style={{
         backgroundColor: '#ffffff',
         padding: '20px',
