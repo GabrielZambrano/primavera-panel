@@ -2248,7 +2248,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
          direccion: direccion || '',
          base: convertirNumeroABase(base || '0'), // Nuevo campo base
-         destino: 'QUITO-ECUADOR', // Destino por defecto
+         destino: '', // Destino por defecto
          fecha: fecha,
          estado: 'Aceptado',
          pedido: 'Aceptado',
