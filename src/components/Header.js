@@ -105,24 +105,14 @@ function Header({ activeSection, operadorAutenticado, reporteDiario, resumenViaj
             marginLeft: '20px',
             flexWrap: 'wrap'
           }}>
-            {/* Total (viajesRegistrados) */}
+            {/* Manuales (viajesRegistrados son los registrados manualmente) */}
             <div style={{
               display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px',
               backgroundColor: '#3b82f6', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: 'white'
             }}>
-              <span>📊</span>
+              <span>�</span>
               <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{reporteDiario.viajesRegistrados || 0}</span>
-              <span>Total</span>
-            </div>
-
-            {/* Asignados */}
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px',
-              backgroundColor: '#10b981', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: 'white'
-            }}>
-              <span>✅</span>
-              <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{reporteDiario.viajesAsignados || 0}</span>
-              <span>Asignados</span>
+              <span>Manuales</span>
             </div>
 
             {/* Cancelados (total) */}
@@ -143,6 +133,16 @@ function Header({ activeSection, operadorAutenticado, reporteDiario, resumenViaj
               <span>⚙️</span>
               <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{reporteDiario.viajesAutomaticos || 0}</span>
               <span>Automáticos</span>
+            </div>
+
+            {/* Total (Manuales + Automáticos) */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: '4px', padding: '6px 10px',
+              backgroundColor: '#059669', borderRadius: '6px', fontSize: '12px', fontWeight: '600', color: 'white'
+            }}>
+              <span>📊</span>
+              <span style={{ fontWeight: 'bold', fontSize: '14px' }}>{(reporteDiario.viajesRegistrados || 0) + (reporteDiario.viajesAutomaticos || 0)}</span>
+              <span>Total</span>
             </div>
 
             {/* Indicador de estado */}

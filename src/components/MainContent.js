@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { Wrapper, Status } from "@googlemaps/react-wrapper";
-import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot, setDoc, orderBy, limit, increment } from "firebase/firestore";
+import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, deleteDoc, onSnapshot, setDoc, orderBy, limit, increment, serverTimestamp } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { db, storage } from "../firebaseConfig";
 import * as XLSX from 'xlsx';
@@ -418,6 +418,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           viajesFinalizados: 0,
           vouchersGenerados: 0,
           viajesAutomaticos: 0,
+          viajesManuales: 0,
           clientesNuevos: 0,
           ultimaActualizacion: new Date().toISOString()
         };
@@ -505,7 +506,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       viajesCancelados: 0,
       viajesCanceladosPorCliente: 0,
       viajesCanceladosPorConductor: 0,
-      viajesSinUnidad: 0
+      viajesSinUnidad: 0,
+      viajesAutomaticos: 0,
+      viajesManuales: 0
     });
   };
 
@@ -568,14 +571,55 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   const [modalAccionesPedido, setModalAccionesPedido] = useState({
     open: false,
     pedido: null,
-    coleccion: '' // 'pedidosDisponibles' o 'pedidoEnCurso'
+    coleccion: '' // 'pedidosDisponibles1' o 'pedidoEnCurso'
   });
+
+  // Estado para mensaje del conductor
+  const [mensajeConductor, setMensajeConductor] = useState('');
 
   // Estado para controlar múltiples inserciones
   const [insertandoRegistro, setInsertandoRegistro] = useState(false);
 
   // Estado para mostrar el texto de la selección
   const [textoSeleccion, setTextoSeleccion] = useState('Selección Manual');
+
+  // Estados para los nuevos campos de empresa y modo de selección
+  const [tipoEmpresa, setTipoEmpresa] = useState('Efectivo');
+  const [modoSeleccionUI, setModoSeleccionUI] = useState('Manual');
+  
+  // Estado para autorización pre-generada
+  const [autorizacionPreGenerada, setAutorizacionPreGenerada] = useState('');
+
+  // useEffect para pre-generar autorización cuando el tipo de empresa no sea Efectivo
+  useEffect(() => {
+    const preGenerarAutorizacion = async () => {
+      if (tipoEmpresa && tipoEmpresa !== 'Efectivo') {
+        try {
+          // Obtener el siguiente número de autorización
+          const vouchersRef = collection(db, 'voucherCorporativos');
+          const q = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
+          const querySnapshot = await getDocs(q);
+          
+          let siguienteNumero = 40000;
+          if (!querySnapshot.empty) {
+            const ultimoVoucher = querySnapshot.docs[0].data();
+            siguienteNumero = Math.max(40000, (ultimoVoucher.numeroAutorizacion || 39999) + 1);
+          }
+          
+          setAutorizacionPreGenerada(siguienteNumero.toString());
+          console.log(`✅ Autorización pre-generada: ${siguienteNumero} para empresa: ${tipoEmpresa}`);
+        } catch (error) {
+          console.error('❌ Error al pre-generar autorización:', error);
+          setAutorizacionPreGenerada('');
+        }
+      } else {
+        // Si es Efectivo, limpiar la autorización pre-generada
+        setAutorizacionPreGenerada('');
+      }
+    };
+
+    preGenerarAutorizacion();
+  }, [tipoEmpresa]); // Se ejecuta cada vez que cambie tipoEmpresa
 
   // Función para actualizar la configuración en la colección
   const actualizarConfiguracion = async (nuevoEstado) => {
@@ -615,8 +659,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           fechaActualizacion: new Date()
         });
         
-        // Actualizar solo el texto mostrado
+        // Actualizar solo el texto mostrado y los nuevos campos
         setTextoSeleccion(nuevoEstado ? 'Selección Automática' : 'Selección Manual');
+        setModoSeleccionUI(nuevoEstado ? 'Automática' : 'Manual');
         
         console.log(`✅ Estado de configuración cambiado de ${estadoActual ? 'Automático' : 'Manual'} a ${nuevoEstado ? 'Automático' : 'Manual'}`);
       } else {
@@ -627,6 +672,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         });
         
         setTextoSeleccion('Selección Manual');
+        setModoSeleccionUI('Manual');
         console.log('✅ Documento de configuración creado con estado Manual');
       }
     } catch (error) {
@@ -644,6 +690,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         const estado = configDoc.data().estado;
         // Actualizar el texto según el estado en la BD
         setTextoSeleccion(estado ? 'Selección Automática' : 'Selección Manual');
+        setModoSeleccionUI(estado ? 'Automática' : 'Manual');
         console.log(`📋 Estado cargado: ${estado ? 'Automático' : 'Manual'} - Texto: ${estado ? 'Selección Automática' : 'Selección Manual'}`);
       } else {
         // Si no existe el documento, crear con estado manual por defecto
@@ -652,6 +699,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           fechaActualizacion: new Date()
         });
         setTextoSeleccion('Selección Manual');
+        setModoSeleccionUI('Manual');
         console.log('📋 Documento de configuración creado con estado Manual por defecto');
       }
     } catch (error) {
@@ -757,6 +805,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         `🎯 Destino: ${reserva.destino || 'N/D'}`,
         `🕒 Fecha/Hora: ${fechaTxt || 'N/D'}`,
         `📝 Motivo: ${reserva.motivo || 'N/D'}`,
+        reserva.tipoEmpresa && reserva.tipoEmpresa !== 'Efectivo' ? `🏢 Empresa: ${reserva.tipoEmpresa}` : null,
+        reserva.autorizacionPreGenerada ? `🔑 Autorización: ${reserva.autorizacionPreGenerada}` : null,
         reserva.operador?.nombre ? `👨‍💼 Operador: ${reserva.operador.nombre}` : null
       ].filter(Boolean).join('\n');
 
@@ -775,7 +825,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           `🕒 ${fechaTxt}`,
           `📍 Desde: ${reserva.direccion || 'N/D'}`,
           reserva.destino ? `🎯 Hacia: ${reserva.destino}` : null,
-          reserva.motivo ? `📝 Motivo: ${reserva.motivo}` : null
+          reserva.motivo ? `📝 Motivo: ${reserva.motivo}` : null,
+          reserva.tipoEmpresa && reserva.tipoEmpresa !== 'Efectivo' ? `🏢 Empresa: ${reserva.tipoEmpresa}` : null
         ].filter(Boolean).join('\n');
 
         await postFormUrlEncoded('http://84.46.245.131:3001/send/message', {
@@ -834,6 +885,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         estado: 'pendiente',
         origen: 'central',
         createdAt: new Date(),
+        // Información de empresa y autorización (si aplica)
+        tipoEmpresa: tipoEmpresa || 'Efectivo',
+        autorizacionPreGenerada: tipoEmpresa && tipoEmpresa !== 'Efectivo' ? autorizacionPreGenerada : '',
         operador: operadorAutenticado ? {
           id: operadorAutenticado.id || '',
           nombre: operadorAutenticado.nombre || '',
@@ -857,6 +911,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         destino: ''
       });
 
+      // Resetear tipo de empresa a "Efectivo" después de guardar la reserva
+      setTipoEmpresa('Efectivo');
+
       setModal({ open: true, success: true, message: 'Reserva guardada exitosamente.' });
     } catch (error) {
       console.error('❌ Error al guardar la reserva:', error);
@@ -866,13 +923,20 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
   // Configurar listeners en tiempo real para las colecciones
   useEffect(() => {
-    // Listener para pedidosDisponibles
-    const qDisponibles = query(collection(db, 'pedidosDisponibles'));
+    // Listener para pedidosDisponibles1
+    const qDisponibles = query(collection(db, 'pedidosDisponibles1'));
     const unsubscribeDisponibles = onSnapshot(qDisponibles, (querySnapshot) => {
-      const pedidos = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      console.log('🔄 Listener de pedidosDisponibles1 ejecutado');
+      console.log('📊 Número de documentos:', querySnapshot.docs.length);
+      
+      const pedidos = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        console.log('📄 Documento encontrado:', doc.id, data);
+        return {
+          id: doc.id,
+          ...data
+        };
+      });
       
       // Ordenar por fecha de creación más reciente primero
       pedidos.sort((a, b) => {
@@ -884,10 +948,11 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         return 0;
       });
       
+      console.log('✅ Pedidos procesados para mostrar:', pedidos.length);
       setViajesAsignados(pedidos);
       setCargandoViajes(false);
     }, (error) => {
-      console.error('Error en listener de pedidosDisponibles:', error);
+      console.error('❌ Error en listener de pedidosDisponibles1:', error);
       setCargandoViajes(false);
     });
 
@@ -930,15 +995,23 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   }, []);
 
   const cargarViajesAsignados = async () => {
+    console.log('🔄 Iniciando carga manual de pedidos disponibles...');
     setCargandoViajes(true);
     try {
       // Leer todos los pedidos disponibles
-      const q = query(collection(db, 'pedidosDisponibles'));
+      const q = query(collection(db, 'pedidosDisponibles1'));
+      console.log('📡 Ejecutando consulta a pedidosDisponibles1...');
       const querySnapshot = await getDocs(q);
-      const pedidos = querySnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      }));
+      console.log('📊 Documentos encontrados:', querySnapshot.docs.length);
+      
+      const pedidos = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        console.log('📄 Documento cargado:', doc.id, data);
+        return {
+          id: doc.id,
+          ...data
+        };
+      });
       
       // Ordenar por fecha de creación más reciente primero
       pedidos.sort((a, b) => {
@@ -950,9 +1023,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         return 0;
       });
       
+      console.log('✅ Pedidos procesados para mostrar:', pedidos.length);
       setViajesAsignados(pedidos);
     } catch (error) {
-      console.error('Error al cargar pedidos:', error);
+      console.error('❌ Error al cargar pedidos:', error);
     } finally {
       setCargandoViajes(false);
     }
@@ -1962,7 +2036,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        }
        
        const pedidoData = {
-         // Estructura basada en tu colección pedidosDisponibles
+         // Estructura basada en tu colección pedidosDisponibles1
          clave: clave,
          codigo: nombre || '',
          nombreCliente: nombre || '',
@@ -1991,14 +2065,50 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          viajes: '',
          foto: '0',
          tarifaSeleccionada: true,
-         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+         // Campo de autorización (pre-generado opcionalmente desde el botón de voucher o automáticamente para empresas)
+         autorizacion: preRegistroVoucher?.activo ? preRegistroVoucher.numeroAutorizacion : 
+                      (tipoEmpresa !== 'Efectivo' && autorizacionPreGenerada ? autorizacionPreGenerada : null),
+         modoSeleccion: modoSeleccionUI, // Nuevo campo para el modo de selección UI
+         tipoEmpresa: tipoEmpresa // Nuevo campo para empresa/efectivo
        };
 
-       // Guardar en la colección "pedidosDisponibles"
-       const docRef = await addDoc(collection(db, 'pedidosDisponibles'), pedidoData);
+       // Guardar en la colección "pedidosDisponibles1"
+       console.log('💾 Guardando pedido en pedidosDisponibles1:', pedidoData);
+       const docRef = await addDoc(collection(db, 'pedidosDisponibles1'), pedidoData);
+       console.log('✅ Pedido guardado con ID:', docRef.id);
        
        // Actualizar el documento con su propio ID
        await updateDoc(docRef, { id: docRef.id });
+      
+      // Si se usó un número de autorización pre-generado, desactivarlo para evitar reutilización accidental
+      try {
+        if (preRegistroVoucher?.activo) {
+          setPreRegistroVoucher({ numeroAutorizacion: null, activo: false });
+        }
+        
+        // Si se usó autorización automática para empresa, actualizar el contador en Firestore
+        if (tipoEmpresa !== 'Efectivo' && autorizacionPreGenerada) {
+          console.log(`✅ Utilizando autorización automática: ${autorizacionPreGenerada} para empresa: ${tipoEmpresa}`);
+          
+          // Registrar el uso de la autorización en voucherCorporativos para mantener el contador
+          await addDoc(collection(db, 'voucherCorporativos'), {
+            numeroAutorizacion: parseInt(autorizacionPreGenerada),
+            cliente: nombre || '',
+            telefono: telefono || '',
+            empresa: tipoEmpresa,
+            fecha: new Date(),
+            tipo: 'autorización_automática',
+            operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+            estado: 'utilizada'
+          });
+          
+          // Limpiar la autorización pre-generada para que se genere una nueva
+          setAutorizacionPreGenerada('');
+        }
+      } catch (error) {
+        console.error('❌ Error al manejar autorización:', error);
+      }
        
        // Guardar en historial del cliente si hay dirección
        if (telefono && direccion) {
@@ -2014,9 +2124,16 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        limpiarFormularioCompleto();
        
        // Registro silencioso - sin mostrar alert de éxito
-       console.log('✅ Pedido registrado silenciosamente en pedidosDisponibles');
+       console.log('✅ Pedido registrado silenciosamente en pedidosDisponibles1');
        // Actualizar contador de viajes registrados
        await actualizarContadorReporte('viajesRegistrados');
+       // Actualizar contador de viajes manuales
+       await actualizarContadorReporte('viajesManuales');
+       
+       // Resetear empresa a "Efectivo" después de enviar exitosamente
+       if (tipoEmpresa !== 'Efectivo') {
+         setTipoEmpresa('Efectivo');
+       }
      } catch (error) {
        console.error('Error al registrar el pedido:', error);
        setModal({ open: true, success: false, message: 'Error al registrar el pedido.' });
@@ -2171,7 +2288,11 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          tarifaSeleccionada: true,
          modoSeleccion: 'manual',
          modoAsignacion: 'manual', // Campo adicional para indicar asignación manual
-         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+         tipoEmpresa: tipoEmpresa, // Nuevo campo para empresa/efectivo
+         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+         // Campo de autorización (pre-generado opcionalmente desde el botón de voucher o automáticamente para empresas)
+         autorizacion: preRegistroVoucher?.activo ? preRegistroVoucher.numeroAutorizacion : 
+                      (tipoEmpresa !== 'Efectivo' && autorizacionPreGenerada ? autorizacionPreGenerada : null)
        };
 
        // Guardar directamente en la colección "pedidoEnCurso"
@@ -2179,6 +2300,35 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        
        // Actualizar el documento con su propio ID
        await updateDoc(docRef, { id: docRef.id });
+
+      // Si se usó un número de autorización pre-generado, desactivarlo para evitar reutilización accidental
+      try {
+        if (preRegistroVoucher?.activo) {
+          setPreRegistroVoucher({ numeroAutorizacion: null, activo: false });
+        }
+        
+        // Si se usó autorización automática para empresa, actualizar el contador en Firestore
+        if (tipoEmpresa !== 'Efectivo' && autorizacionPreGenerada) {
+          console.log(`✅ Utilizando autorización automática: ${autorizacionPreGenerada} para empresa: ${tipoEmpresa}`);
+          
+          // Registrar el uso de la autorización en voucherCorporativos para mantener el contador
+          await addDoc(collection(db, 'voucherCorporativos'), {
+            numeroAutorizacion: parseInt(autorizacionPreGenerada),
+            cliente: nombre || '',
+            telefono: telefono || '',
+            empresa: tipoEmpresa,
+            fecha: new Date(),
+            tipo: 'autorización_automática',
+            operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+            estado: 'utilizada'
+          });
+          
+          // Limpiar la autorización pre-generada para que se genere una nueva
+          setAutorizacionPreGenerada('');
+        }
+      } catch (error) {
+        console.error('❌ Error al manejar autorización:', error);
+      }
        
        // Crear duplicado en la colección "NotificaciOnenCurso" para sistema de notificaciones
        const notificacionEnCursoData = {
@@ -2226,6 +2376,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        
        // Actualizar contador de viajes registrados
        await actualizarContadorReporte('viajesRegistrados');
+       // Actualizar contador de viajes manuales (porque se registró manualmente)
+       await actualizarContadorReporte('viajesManuales');
+       
+       // Resetear empresa a "Efectivo" después de enviar exitosamente
+       if (tipoEmpresa !== 'Efectivo') {
+         setTipoEmpresa('Efectivo');
+       }
     } catch (error) {
       console.error('Error al registrar el viaje:', error);
       setModal({ open: true, success: false, message: 'Error al registrar el pedido en curso.' });
@@ -2250,6 +2407,40 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       pedido: null,
       coleccion: ''
     });
+    // Limpiar el mensaje cuando se cierra el modal
+    setMensajeConductor('');
+  };
+
+  // Función para enviar mensaje al conductor
+  const enviarMensajeConductor = async () => {
+    if (!modalAccionesPedido.pedido || !mensajeConductor.trim()) {
+      setModal({ open: true, success: false, message: 'Por favor escriba un mensaje antes de enviarlo.' });
+      return;
+    }
+
+    try {
+      const pedido = modalAccionesPedido.pedido;
+      
+      // Crear el mensaje en la colección mensajesConductor
+      await addDoc(collection(db, 'mensajesConductor'), {
+        unidad: pedido.numeroUnidad || pedido.unidad || 'Sin unidad',
+        conductor: pedido.nombre || 'Sin conductor',
+        telefonoConductor: pedido.telefono || pedido.telefonoCompleto || 'Sin teléfono',
+        cliente: pedido.nombreCliente || pedido.codigo || 'Sin cliente',
+        mensaje: mensajeConductor.trim(),
+        fecha: serverTimestamp(),
+        leido: false,
+        pedidoId: pedido.id || 'Sin ID',
+        origen: 'modal-acciones'
+      });
+
+      setModal({ open: true, success: true, message: 'Mensaje enviado exitosamente al conductor.' });
+      setMensajeConductor(''); // Limpiar el campo de mensaje
+      
+    } catch (error) {
+      console.error('Error al enviar mensaje al conductor:', error);
+      setModal({ open: true, success: false, message: 'Error al enviar el mensaje: ' + error.message });
+    }
   };
 
   // Función para cancelar pedido por cliente
@@ -2358,7 +2549,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   const [modalVoucher, setModalVoucher] = useState({
     open: false,
     voucher: {
-      fechaHora: '',
+      fechaHoraInicio: '',
+      fechaHoraFinal: '',
       nombreCliente: '',
       telefono: '',
       direccion: '',
@@ -2367,7 +2559,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       motivo: '',
       informacionViaje: '',
       numeroUnidad: '',
-      empresa: ''
+      empresa: '',
+      tipoVoucher: 'electronico', // 'electronico' o 'fisico'
+      numeroVoucherFisico: '' // Solo para vouchers físicos
     }
   });
 
@@ -2386,18 +2580,46 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
   // Lista de empresas para el voucher
   const empresasVoucher = [
-    'LOGIRAN O RANZA',
-    'ETERNIT',
-    'NOVACERO',
-    'RENE CHARDON',
-    'FUND.TIERRA NUEVA (CARDENAL DE LA TORRE)',
-    'HOSP.UN CANTO A LA VIDA (LAS CUADRAS)',
-    'SUNCHEMICAL O SINCLAIR',
-    'HYUNDAI/ASIACAR',
-    'AUDESUR O NISSAN - AV MARISCAL SUCRE',
-    'COLISIONES AUDESUR - AV TABIAZO',
-    'FUNDACION MATILDE SUR',
-    'FUND.MATILDE NORTE'
+    'Acosaustro',
+    'Larrea y Ortiz',
+    'Aekansa',
+    'Equindeca',
+    'U. Salesiana',
+    'Ecuador tax',
+    'U. Laica',
+    'Godfilms',
+    'Odonto',
+    'Alianza Francesa',
+    'fundacion de damas',
+    'El juri',
+    'Godcorp',
+    'Expoplaza',
+    'PSI',
+    'Amgrucia',
+    'Prohorizon',
+    'Sonkir',
+    'Mediken',
+    'Xerticaec',
+    'Citikold',
+    'Medystia',
+    'Sinergia',
+    'Vector global',
+    'ORODELTI',
+    'Expoguayaquil',
+    'Canodros',
+    'TRANSFERENCIA',
+    'Rocnarf',
+    'Reysac',
+    'Efectivo',
+    'taxiMEDIKEN',
+    'INSICHTBUILDING S.A',
+    'Aduanatax',
+    'ACOSAUSTRO',
+    'TAXI JELUO S.A',
+    'EFC',
+    'Valoratec',
+    'SOLARIS',
+    'QFCORP'
   ];
 
   // Función para pre-registrar voucher
@@ -2440,6 +2662,11 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
       console.log('✅ Voucher pre-registrado con número:', numeroAutorizacion);
       setModal({ open: true, success: true, message: `Voucher pre-registrado exitosamente. Número de autorización: ${numeroAutorizacion}` });
+      
+      // Resetear empresa a "Efectivo" después de pre-registrar voucher exitosamente
+      if (tipoEmpresa !== 'Efectivo') {
+        setTipoEmpresa('Efectivo');
+      }
     } catch (error) {
       console.error('❌ Error al pre-registrar voucher:', error);
       setModal({ open: true, success: false, message: 'Error al pre-registrar el voucher.' });
@@ -2457,17 +2684,23 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       await obtenerSiguienteNumeroAutorizacion();
       
       // Preparar datos del voucher
+      const fechaActual = new Date();
+      // Convertir a formato datetime-local (YYYY-MM-DDTHH:MM)
+      const fechaDatetimeLocal = fechaActual.toISOString().slice(0, 16);
+      
       const voucherData = {
-        fechaHora: new Date().toLocaleString('es-EC'),
+        fechaHoraInicio: fechaDatetimeLocal,
+        fechaHoraFinal: fechaDatetimeLocal, // Inicializa con la misma fecha, pero editable
         nombreCliente: pedido.nombreCliente || pedido.codigo || 'N/A',
         telefono: pedido.telefono || 'N/A',
         direccion: pedido.direccion || 'N/A',
-        destino: '', // Campo vacío para que el usuario lo digite
-        valor: pedido.valor || '0.00',
+        destino: '', // Campo vacío para que el usuario lo digite (obligatorio)
+        valor: '', // Valor en vacío por defecto
         motivo: '',
-        informacionViaje: `Base: ${pedido.base || 'N/A'}, Tiempo: ${pedido.tiempo || 'N/A'}, Unidad: ${pedido.unidad || 'N/A'}`,
-        numeroUnidad: pedido.unidad || '',
-        empresa: ''
+        numeroUnidad: pedido.unidad || '', // No editable
+        empresa: pedido.tipoEmpresa || '', // Cargar automáticamente la empresa del pedido
+        tipoVoucher: 'electronico', // Por defecto electrónico
+        numeroVoucherFisico: '' // Solo para vouchers físicos
       };
 
       setModalVoucher({
@@ -2492,16 +2725,18 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     setModalVoucher({
       open: false,
       voucher: {
-        fechaHora: '',
+        fechaHoraInicio: '',
+        fechaHoraFinal: '',
         nombreCliente: '',
         telefono: '',
         direccion: '',
         destino: '',
         valor: '',
         motivo: '',
-        informacionViaje: '',
         numeroUnidad: '',
-        empresa: ''
+        empresa: '',
+        tipoVoucher: 'electronico',
+        numeroVoucherFisico: ''
       }
     });
     
@@ -2600,8 +2835,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   const guardarVoucherCorporativo = async () => {
     try {
       // Validar campos requeridos
-      if (!modalVoucher.voucher.nombreCliente || !modalVoucher.voucher.telefono || !modalVoucher.voucher.empresa) {
-        setModal({ open: true, success: false, message: 'Por favor complete todos los campos requeridos.' });
+      if (!modalVoucher.voucher.nombreCliente || !modalVoucher.voucher.destino || !modalVoucher.voucher.empresa) {
+        setModal({ open: true, success: false, message: 'Por favor complete todos los campos requeridos (Nombre del Cliente, Destino y Empresa).' });
+        return;
+      }
+
+      // Validar número de voucher físico si es necesario
+      if (modalVoucher.voucher.tipoVoucher === 'fisico' && !modalVoucher.voucher.numeroVoucherFisico.trim()) {
+        setModal({ open: true, success: false, message: 'Por favor ingrese el número de voucher físico.' });
         return;
       }
 
@@ -2815,6 +3056,130 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       setModal({ open: true, success: false, message: 'Error al generar la reserva.' });
     }
   };
+
+  // Generar autorización para pedido en 'pedidoEnCurso'
+  const generarAutorizacionParaPedidoEnCurso = async () => {
+    try {
+      if (!modalAccionesPedido.pedido || modalAccionesPedido.coleccion !== 'pedidoEnCurso') return;
+      const pedido = modalAccionesPedido.pedido;
+      if (pedido.autorizacion) {
+        setModal({ open: true, success: false, message: `Este pedido ya tiene autorización: ${pedido.autorizacion}` });
+        return;
+      }
+
+      // Obtener el siguiente número disponible
+      const vouchersRef = collection(db, 'voucherCorporativos');
+      const qUltimo = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
+      let numeroAutorizacion = 40000;
+      try {
+        const querySnapshot = await getDocs(qUltimo);
+        if (!querySnapshot.empty) {
+          const ultimo = querySnapshot.docs[0].data();
+          numeroAutorizacion = Math.max(40000, (ultimo.numeroAutorizacion || 39999) + 1);
+        }
+      } catch {}
+
+      // Registrar pre-registro
+      let operadorNombre = null;
+      try {
+        const almacenado = localStorage.getItem('operadorAutenticado');
+        if (almacenado) {
+          const op = JSON.parse(almacenado);
+          operadorNombre = op?.nombre || null;
+        }
+      } catch {}
+
+      const preRegistro = {
+        nombreCliente: pedido.nombreCliente || pedido.codigo || '',
+        telefono: pedido.telefono || '',
+        empresa: null,
+        createdAt: new Date(),
+        numeroAutorizacion,
+        origen: 'pedidoEnCurso',
+        pedidoId: pedido.id,
+        estado: 'pre-registrado',
+        operador: operadorNombre || null
+      };
+      await addDoc(vouchersRef, preRegistro);
+
+      // Actualizar el pedido en curso
+      const pedidoRef = doc(db, 'pedidoEnCurso', pedido.id);
+      await updateDoc(pedidoRef, { autorizacion: numeroAutorizacion });
+
+      setModal({ open: true, success: true, message: `Autorización generada: ${numeroAutorizacion}` });
+      setModalAccionesPedido(prev => ({
+        ...prev,
+        pedido: { ...prev.pedido, autorizacion: numeroAutorizacion }
+      }));
+    } catch (error) {
+      console.error('Error al generar autorización (en curso):', error);
+      setModal({ open: true, success: false, message: 'No se pudo generar la autorización.' });
+    }
+  };
+
+  // Generar autorización para pedido en 'pedidosDisponibles1'
+  const generarAutorizacionParaPedidoDisponible = async () => {
+    try {
+      if (!modalAccionesPedido.pedido || modalAccionesPedido.coleccion !== 'pedidosDisponibles1') return;
+      const pedido = modalAccionesPedido.pedido;
+      // Evitar duplicados si ya existe
+      if (pedido.autorizacion) {
+        setModal({ open: true, success: false, message: `Este pedido ya tiene autorización: ${pedido.autorizacion}` });
+        return;
+      }
+
+      // Obtener el siguiente número de autorización desde voucherCorporativos
+      const vouchersRef = collection(db, 'voucherCorporativos');
+      const qUltimo = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
+      let numeroAutorizacion = 40000;
+      try {
+        const querySnapshot = await getDocs(qUltimo);
+        if (!querySnapshot.empty) {
+          const ultimo = querySnapshot.docs[0].data();
+          numeroAutorizacion = Math.max(40000, (ultimo.numeroAutorizacion || 39999) + 1);
+        }
+      } catch (e) {
+        // Si falla, usar base 40000
+        numeroAutorizacion = 40000;
+      }
+
+      // Registrar pre-registro en voucherCorporativos para reservar el número
+      let operadorNombre = null;
+      try {
+        const almacenado = localStorage.getItem('operadorAutenticado');
+        if (almacenado) {
+          const op = JSON.parse(almacenado);
+          operadorNombre = op?.nombre || null;
+        }
+      } catch {}
+      const preRegistro = {
+        nombreCliente: pedido.nombreCliente || pedido.codigo || '',
+        telefono: pedido.telefono || '',
+        empresa: null,
+        createdAt: new Date(),
+        numeroAutorizacion,
+        origen: 'pedidoDisponible',
+        pedidoId: pedido.id,
+        estado: 'pre-registrado',
+        operador: operadorNombre || null
+      };
+      await addDoc(vouchersRef, preRegistro);
+
+      // Guardar en el pedido disponible
+      const pedidoRef = doc(db, 'pedidosDisponibles1', pedido.id);
+      await updateDoc(pedidoRef, { autorizacion: numeroAutorizacion });
+
+      // Feedback y refresco local del modal
+      setModal({ open: true, success: true, message: `Autorización generada: ${numeroAutorizacion}` });
+      setModalAccionesPedido(prev => ({
+        ...prev,
+        pedido: { ...prev.pedido, autorizacion: numeroAutorizacion }
+      }));
+    } catch (error) {
+      console.error('Error al generar autorización:', error);
+      setModal({ open: true, success: false, message: 'No se pudo generar la autorización.' });
+    }
+  };
   // Función para cambiar estado del pedido
   const cambiarEstadoPedido = async (nuevoEstado) => {
     if (!modalAccionesPedido.pedido) return;
@@ -2973,8 +3338,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        const tokenConductor = conductorData.token || conductorData.fcmToken || conductorData.deviceToken || '';
        const tokenValido = validarTokenConductor(tokenConductor);
  
-       // 1. Obtener el pedido actual de pedidosDisponibles
-       const pedidoOriginalRef = doc(db, 'pedidosDisponibles', viajeId);
+       // 1. Obtener el pedido actual de pedidosDisponibles1
+       const pedidoOriginalRef = doc(db, 'pedidosDisponibles1', viajeId);
        const pedidoOriginalSnap = await getDoc(pedidoOriginalRef);
        
        if (!pedidoOriginalSnap.exists()) {
@@ -3012,6 +3377,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          longitudConductor: '',
          tarifaSeleccionada: true,
          modoAsignacion: 'manual', // Campo adicional para indicar asignación manual
+         tipoEmpresa: tipoEmpresa, // Nuevo campo para empresa/efectivo
          operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
        };
 
@@ -3031,7 +3397,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        
        await addDoc(collection(db, 'NotificaciOnenCurso'), notificacionEnCursoData);
 
-       // 5. Eliminar de pedidosDisponibles
+       // 5. Eliminar de pedidosDisponibles1
        await deleteDoc(pedidoOriginalRef);
 
        // Guardar en historial del cliente si hay dirección
@@ -3053,7 +3419,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
            tipo: 'manual',
            estadoRegistro: 'Registrado',
            modoRegistro: 'manual',
-           origen: 'pedidosDisponibles' // Indicar de dónde viene
+           origen: 'pedidosDisponibles1' // Indicar de dónde viene
          };
 
          await addDoc(collection(db, 'pedidosManuales'), pedidoManualData);
@@ -3128,7 +3494,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         }
       }
       
-      // Datos para inserción directa en pedidosDisponibles
+      // Datos para inserción directa en pedidosDisponibles1
       const pedidoData = {
         // Datos básicos del pedido
         clave: clave,
@@ -3152,25 +3518,26 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         
         // Datos adicionales
         sector: direccion || '',
-        tipoPedido: modoSeleccion === 'manual' ? 'Manual' : 'Automático',
+        tipoPedido: modoSeleccionUI === 'Manual' ? 'Manual' : 'Automático',
         valor: '',
         central: false,
         coorporativo: false,
         llegue: false,
         puerto: '3020',
         randon: clave,
-        rango: modoSeleccion === 'manual' ? '0' : (coordenadas ? '1' : '0'), // Rango 0 si es manual, 1 si hay coordenadas en aplicación
+        rango: modoSeleccionUI === 'Manual' ? '0' : (coordenadas ? '1' : '0'), // Rango 0 si es manual, 1 si hay coordenadas en aplicación
         viajes: unidad || '',
         foto: '0',
         tarifaSeleccionada: true,
         
         // Identificación del modo
-        modoSeleccion: modoSeleccion,
+        modoSeleccion: modoSeleccionUI.toLowerCase(), // Convertir a minúscula para compatibilidad
+        tipoEmpresa: tipoEmpresa, // Nuevo campo para empresa/efectivo
         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
-      // Inserción directa en la colección "pedidosDisponibles"
-      const docRef = await addDoc(collection(db, 'pedidosDisponibles'), pedidoData);
+      // Inserción directa en la colección "pedidosDisponibles1"
+      const docRef = await addDoc(collection(db, 'pedidosDisponibles1'), pedidoData);
       
       // Actualizar el documento con su propio ID
       await updateDoc(docRef, { id: docRef.id });
@@ -3190,6 +3557,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        
        // Actualizar contador de viajes registrados
        await actualizarContadorReporte('viajesRegistrados');
+       // Actualizar contador de viajes manuales
+       await actualizarContadorReporte('viajesManuales');
+       
+       // Resetear empresa a "Efectivo" después de enviar exitosamente
+       if (tipoEmpresa !== 'Efectivo') {
+         setTipoEmpresa('Efectivo');
+       }
 
      /// setModal({ open: true, success: true, message: '¡Pedido registrado directamente en la base de datos!' });
     } catch (error) {
@@ -3585,32 +3959,112 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                             telefono.length >= 7 && !usuarioEncontrado ? '#fee2e2' : 'white'
             }}
           />
-          <select 
-            value={textoSeleccion}
-            onChange={(e) => {
-              const nuevoTexto = e.target.value;
-              setTextoSeleccion(nuevoTexto);
-              
-              // Determinar el nuevo estado basado en el texto seleccionado
-              const nuevoEstado = nuevoTexto === 'Selección Automática';
-              
-              // Actualizar la colección de configuración
-              actualizarConfiguracion(nuevoEstado);
-            }}
-            style={{
-              padding: '12px 16px',
-              border: '2px solid #666',
-              borderRadius: 4,
-              fontSize: '18px',
-              fontWeight: 'bold',
-              minWidth: '180px',
-              flex: '1 1 200px'
-            }}
-          >
-            <option value="Selección Manual">Selección Manual</option>
-            <option value="Selección Automática">Selección Automática</option>
-          </select>
+          <div style={{
+            display: 'flex',
+            gap: '10px',
+            flex: '1 1 200px',
+            minWidth: '360px'
+          }}>
+            <select 
+              value={tipoEmpresa}
+              onChange={(e) => setTipoEmpresa(e.target.value)}
+              style={{
+                padding: '12px 16px',
+                border: '2px solid #666',
+                borderRadius: 4,
+                fontSize: '18px',
+                fontWeight: 'bold',
+                flex: '1'
+              }}
+            >
+              <option value="Efectivo">💵 Efectivo</option>
+              <option value="Acosaustro">🏢 Acosaustro</option>
+              <option value="Larrea y Ortiz">🏢 Larrea y Ortiz</option>
+              <option value="Aekansa">🏢 Aekansa</option>
+              <option value="Equindeca">🏢 Equindeca</option>
+              <option value="U. Salesiana">🏢 U. Salesiana</option>
+              <option value="Ecuador tax">🏢 Ecuador tax</option>
+              <option value="U. Laica">🏢 U. Laica</option>
+              <option value="Godfilms">🏢 Godfilms</option>
+              <option value="Odonto">🏢 Odonto</option>
+              <option value="Alianza Francesa">🏢 Alianza Francesa</option>
+              <option value="fundacion de damas">🏢 Fundacion de damas</option>
+              <option value="El juri">🏢 El juri</option>
+              <option value="Godcorp">🏢 Godcorp</option>
+              <option value="Expoplaza">🏢 Expoplaza</option>
+              <option value="PSI">🏢 PSI</option>
+              <option value="Amgrucia">🏢 Amgrucia</option>
+              <option value="Prohorizon">🏢 Prohorizon</option>
+              <option value="Sonkir">🏢 Sonkir</option>
+              <option value="Mediken">🏢 Mediken</option>
+              <option value="Xerticaec">🏢 Xerticaec</option>
+              <option value="Citikold">🏢 Citikold</option>
+              <option value="Medystia">🏢 Medystia</option>
+              <option value="Sinergia">🏢 Sinergia</option>
+              <option value="Vector global">🏢 Vector global</option>
+              <option value="ORODELTI">🏢 ORODELTI</option>
+              <option value="Expoguayaquil">🏢 Expoguayaquil</option>
+              <option value="Canodros">🏢 Canodros</option>
+              <option value="TRANSFERENCIA">🏢 TRANSFERENCIA</option>
+              <option value="Rocnarf">🏢 Rocnarf</option>
+              <option value="Reysac">🏢 Reysac</option>
+              <option value="taxiMEDIKEN">🏢 taxiMEDIKEN</option>
+              <option value="INSICHTBUILDING S.A">🏢 INSICHTBUILDING S.A</option>
+              <option value="Aduanatax">🏢 Aduanatax</option>
+              <option value="ACOSAUSTRO">🏢 ACOSAUSTRO</option>
+              <option value="TAXI JELUO S.A">🏢 TAXI JELUO S.A</option>
+              <option value="EFC">🏢 EFC</option>
+              <option value="Valoratec">🏢 Valoratec</option>
+              <option value="SOLARIS">🏢 SOLARIS</option>
+              <option value="QFCORP">🏢 QFCORP</option>
+            </select>
+            
+            <select 
+              value={modoSeleccionUI}
+              onChange={(e) => {
+                const nuevoModo = e.target.value;
+                setModoSeleccionUI(nuevoModo);
+                
+                // Mantener compatibilidad con el sistema existente
+                const textoCompleto = nuevoModo === 'Automática' ? 'Selección Automática' : 'Selección Manual';
+                setTextoSeleccion(textoCompleto);
+                
+                // Actualizar la colección de configuración
+                const nuevoEstado = nuevoModo === 'Automática';
+                actualizarConfiguracion(nuevoEstado);
+              }}
+              style={{
+                padding: '12px 16px',
+                border: '2px solid #666',
+                borderRadius: 4,
+                fontSize: '18px',
+                fontWeight: 'bold',
+                flex: '1'
+              }}
+            >
+              <option value="Manual">🔧 Manual</option>
+              <option value="Automática">⚡ Automática</option>
+            </select>
+          </div>
         </div>
+
+        {/* Indicador de autorización pre-generada */}
+        {autorizacionPreGenerada && tipoEmpresa !== 'Efectivo' && (
+          <div style={{
+            padding: '10px 15px',
+            marginBottom: '15px',
+            backgroundColor: '#e8f5e8',
+            border: '2px solid #4caf50',
+            borderRadius: 6,
+            color: '#2e7d32',
+            fontSize: '16px',
+            fontWeight: 'bold',
+            textAlign: 'center'
+          }}>
+            🎫 Autorización pre-generada: <span style={{ color: '#1976d2' }}>{autorizacionPreGenerada}</span> 
+            para empresa: <span style={{ color: '#1976d2' }}>{tipoEmpresa}</span>
+          </div>
+        )}
 
         <div style={{ 
           display: 'flex', 
@@ -3747,7 +4201,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             </button>
           )}
           
-                     {modoSeleccion === 'manual' && (
+                     {modoSeleccionUI === 'Manual' && (
              <>
                <input
                  ref={baseInputRef}
@@ -4328,22 +4782,27 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               {viajesAsignados.length} disponibles
             </span>
           </h3>
+          
           <button
-            onClick={cargarViajesAsignados}
-            disabled={cargandoViajes}
+            onClick={() => {
+              console.log('🔄 Botón actualizar presionado');
+              cargarViajesAsignados();
+            }}
             style={{
               background: 'rgba(255,255,255,0.2)',
-              border: 'none',
+              border: '1px solid rgba(255,255,255,0.3)',
               color: 'white',
               padding: '8px 16px',
               borderRadius: 8,
-              cursor: cargandoViajes ? 'not-allowed' : 'pointer',
               fontSize: 14,
               fontWeight: 'bold',
-              opacity: cargandoViajes ? 0.7 : 1
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
             }}
           >
-            {cargandoViajes ? '🔄 Cargando...' : '🔄 Actualizar'}
+            🔄 Actualizar
           </button>
         </div>
 
@@ -4366,9 +4825,29 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             <div style={{ fontSize: 18, fontWeight: 'bold', marginBottom: 5 }}>
               No hay pedidos disponibles
             </div>
-            <div style={{ fontSize: 14 }}>
+            <div style={{ fontSize: 14, marginBottom: 10 }}>
               Los pedidos aparecerán aquí cuando se registren desde el formulario
             </div>
+            <div style={{ fontSize: 12, color: '#999', marginBottom: 10 }}>
+              Colección: pedidosDisponibles1
+            </div>
+            <button
+              onClick={() => {
+                console.log('🔍 Verificando conexión a Firestore...');
+                cargarViajesAsignados();
+              }}
+              style={{
+                background: '#667eea',
+                color: 'white',
+                border: 'none',
+                padding: '8px 16px',
+                borderRadius: 6,
+                cursor: 'pointer',
+                fontSize: 12
+              }}
+            >
+              🔍 Verificar Conexión
+            </button>
           </div>
         ) : (
           <div style={{ 
@@ -4465,6 +4944,16 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                    }}>
                      🚕 Unidad
                    </th>
+                    <th style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      fontWeight: 'bold',
+                      color: '#374151',
+                      borderBottom: '2px solid #e5e7eb',
+                      whiteSpace: 'nowrap'
+                    }}>
+                      🔐 Aut.
+                    </th>
                    <th style={{
                      padding: '12px 16px',
                      textAlign: 'center',
@@ -4670,10 +5159,19 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
                       <td style={{
                         padding: '12px 16px',
+                        textAlign: 'center',
+                        fontWeight: 'bold',
+                        color: '#111827'
+                      }}>
+                        {viaje.autorizacion ?? '-'}
+                      </td>
+
+                      <td style={{
+                        padding: '12px 16px',
                         textAlign: 'center'
                       }}>
                         <button
-                          onClick={() => abrirModalAccionesPedido(viaje, 'pedidosDisponibles')}
+                          onClick={() => abrirModalAccionesPedido(viaje, 'pedidosDisponibles1')}
                           style={{
                             padding: '4px 12px',
                             borderRadius: 20,
@@ -4864,6 +5362,16 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     borderBottom: '2px solid #e5e7eb',
                     whiteSpace: 'nowrap'
                   }}>
+                    🔐 Aut.
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap'
+                  }}>
                     🏢 Base
                   </th>
                   <th style={{
@@ -4968,6 +5476,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                       color: '#dc2626'
                     }}>
                       {pedido.unidad || pedido.numeroUnidad || '-'}
+                    </td>
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      fontWeight: 'bold',
+                      color: '#111827'
+                    }}>
+                      {pedido.autorizacion ?? '-'}
                     </td>
                     <td style={{
                       padding: '12px 16px',
@@ -5540,6 +6056,57 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   style={{ width: '100%', padding: '10px', border: '1px solid #d1d5db', borderRadius: 6, resize: 'vertical' }}
                 />
               </div>
+
+              {/* Mostrar información de empresa y autorización si no es Efectivo */}
+              {tipoEmpresa && tipoEmpresa !== 'Efectivo' && (
+                <div style={{ 
+                  background: '#eff6ff', 
+                  border: '1px solid #3b82f6', 
+                  borderRadius: 8, 
+                  padding: 12,
+                  marginTop: 8
+                }}>
+                  <div style={{ fontSize: 14, color: '#1e40af', fontWeight: 600, marginBottom: 8 }}>
+                    🏢 Información de Empresa
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <div style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>Empresa</div>
+                      <input
+                        type="text"
+                        value={tipoEmpresa}
+                        readOnly
+                        style={{
+                          width: '100%',
+                          padding: '8px 10px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: 6,
+                          background: '#f8fafc',
+                          color: '#374151',
+                          fontWeight: 500
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <div style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>Autorización</div>
+                      <input
+                        type="text"
+                        value={autorizacionPreGenerada}
+                        readOnly
+                        style={{
+                          width: '100%',
+                          padding: '8px 10px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: 6,
+                          background: '#f8fafc',
+                          color: '#374151',
+                          fontWeight: 500
+                        }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
@@ -5610,6 +6177,81 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               </p>
             </div>
 
+            {/* Sección para enviar mensaje al conductor */}
+            <div style={{
+              marginBottom: '20px',
+              padding: '15px',
+              background: '#f0f9ff',
+              borderRadius: '8px',
+              border: '1px solid #e0f2fe'
+            }}>
+              <h4 style={{
+                margin: '0 0 10px 0',
+                color: '#0f172a',
+                fontSize: '14px',
+                fontWeight: 'bold',
+                textAlign: 'left'
+              }}>
+                ✉️ Enviar Mensaje Adicional al Conductor
+              </h4>
+              
+              {modalAccionesPedido.pedido?.numeroUnidad && (
+                <p style={{
+                  margin: '0 0 10px 0',
+                  color: '#64748b',
+                  fontSize: '12px',
+                  textAlign: 'left'
+                }}>
+                  🚗 Unidad: {modalAccionesPedido.pedido.numeroUnidad || modalAccionesPedido.pedido.unidad || 'Sin asignar'}
+                  {modalAccionesPedido.pedido?.telefono && (
+                    <span> | 📞 Tel: {modalAccionesPedido.pedido.telefono}</span>
+                  )}
+                </p>
+              )}
+              
+              <textarea
+                value={mensajeConductor}
+                onChange={(e) => setMensajeConductor(e.target.value)}
+                placeholder="Escriba un mensaje adicional para el conductor..."
+                style={{
+                  width: '100%',
+                  minHeight: '80px',
+                  padding: '10px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                  marginBottom: '10px',
+                  boxSizing: 'border-box'
+                }}
+              />
+              
+              <button
+                onClick={enviarMensajeConductor}
+                disabled={!mensajeConductor.trim()}
+                style={{
+                  padding: '8px 16px',
+                  border: 'none',
+                  borderRadius: '6px',
+                  backgroundColor: mensajeConductor.trim() ? '#059669' : '#9ca3af',
+                  color: 'white',
+                  fontSize: '13px',
+                  fontWeight: 'bold',
+                  cursor: mensajeConductor.trim() ? 'pointer' : 'not-allowed',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  if (mensajeConductor.trim()) e.target.style.backgroundColor = '#047857';
+                }}
+                onMouseLeave={(e) => {
+                  if (mensajeConductor.trim()) e.target.style.backgroundColor = '#059669';
+                }}
+              >
+                📤 Enviar Mensaje
+              </button>
+            </div>
+
             <div style={{
               display: 'flex',
               flexDirection: 'column',
@@ -5618,6 +6260,44 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               {/* Botones para pedidos en curso */}
               {modalAccionesPedido.coleccion === 'pedidoEnCurso' && (
                 <>
+              {/* Mostrar autorización actual si existe */}
+              {modalAccionesPedido.pedido?.autorizacion && (
+                <div style={{
+                  padding: '10px 12px',
+                  borderRadius: 8,
+                  background: '#eef2ff',
+                  color: '#3730a3',
+                  fontWeight: 700,
+                  textAlign: 'center'
+                }}>
+                  🔐 Autorización: {modalAccionesPedido.pedido.autorizacion}
+                </div>
+              )}
+
+              <button
+                onClick={generarAutorizacionParaPedidoEnCurso}
+                disabled={Boolean(modalAccionesPedido.pedido?.autorizacion)}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: Boolean(modalAccionesPedido.pedido?.autorizacion) ? '#9ca3af' : '#2563eb',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: Boolean(modalAccionesPedido.pedido?.autorizacion) ? 'not-allowed' : 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  if (!modalAccionesPedido.pedido?.autorizacion) e.target.style.backgroundColor = '#1d4ed8';
+                }}
+                onMouseLeave={(e) => {
+                  if (!modalAccionesPedido.pedido?.autorizacion) e.target.style.backgroundColor = '#2563eb';
+                }}
+              >
+                🔐 Generar Autorización
+              </button>
+
               <button
                 onClick={cancelarPedidoPorCliente}
                 style={{
@@ -5739,8 +6419,46 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               )}
 
               {/* Botones para pedidos disponibles */}
-              {modalAccionesPedido.coleccion === 'pedidosDisponibles' && (
+              {modalAccionesPedido.coleccion === 'pedidosDisponibles1' && (
                 <>
+                  {/* Mostrar autorización actual si existe */}
+                  {modalAccionesPedido.pedido?.autorizacion && (
+                    <div style={{
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      background: '#eef2ff',
+                      color: '#3730a3',
+                      fontWeight: 700,
+                      textAlign: 'center'
+                    }}>
+                      🔐 Autorización: {modalAccionesPedido.pedido.autorizacion}
+                    </div>
+                  )}
+
+                  <button
+                    onClick={generarAutorizacionParaPedidoDisponible}
+                    disabled={Boolean(modalAccionesPedido.pedido?.autorizacion)}
+                    style={{
+                      padding: '12px 20px',
+                      border: 'none',
+                      borderRadius: '8px',
+                      backgroundColor: Boolean(modalAccionesPedido.pedido?.autorizacion) ? '#9ca3af' : '#2563eb',
+                      color: 'white',
+                      fontSize: '14px',
+                      fontWeight: 'bold',
+                      cursor: Boolean(modalAccionesPedido.pedido?.autorizacion) ? 'not-allowed' : 'pointer',
+                      transition: 'all 0.2s'
+                    }}
+                    onMouseEnter={(e) => {
+                      if (!modalAccionesPedido.pedido?.autorizacion) e.target.style.backgroundColor = '#1d4ed8';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (!modalAccionesPedido.pedido?.autorizacion) e.target.style.backgroundColor = '#2563eb';
+                    }}
+                  >
+                    🔐 Generar Autorización
+                  </button>
+
                   <button
                     onClick={cancelarPedidoSinAsignar}
                     style={{
@@ -5881,9 +6599,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               border: '1px solid #e5e7eb'
             }}>
               <div style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: '15px'
+                display: 'flex',
+                justifyContent: 'center',
+                alignItems: 'center'
               }}>
                 <div>
                   <label style={{
@@ -5891,29 +6609,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     marginBottom: '5px',
                     fontWeight: 'bold',
                     color: '#374151',
-                    fontSize: '12px'
-                  }}>
-                    👤 Operador
-                  </label>
-                  <div style={{
-                    padding: '8px 12px',
-                    background: 'white',
-                    borderRadius: '4px',
-                    border: '1px solid #d1d5db',
-                    fontSize: '14px',
-                    color: '#1f2937'
-                  }}>
-                    {operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador autenticado'}
-                  </div>
-                </div>
-                
-                <div>
-                  <label style={{
-                    display: 'block',
-                    marginBottom: '5px',
-                    fontWeight: 'bold',
-                    color: '#374151',
-                    fontSize: '12px'
+                    fontSize: '12px',
+                    textAlign: 'center'
                   }}>
                     🔢 N° Autorización
                   </label>
@@ -5932,6 +6629,76 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               </div>
             </div>
             
+            {/* Selector de tipo de voucher */}
+            <div style={{
+              background: '#f8fafc',
+              padding: '15px',
+              borderRadius: '8px',
+              marginBottom: '20px',
+              border: '1px solid #e2e8f0'
+            }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '10px',
+                fontWeight: 'bold',
+                color: '#374151',
+                fontSize: '14px'
+              }}>
+                📋 Tipo de Voucher
+              </label>
+              <div style={{
+                display: 'flex',
+                gap: '15px'
+              }}>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  backgroundColor: modalVoucher.voucher.tipoVoucher === 'electronico' ? '#dbeafe' : 'transparent',
+                  border: modalVoucher.voucher.tipoVoucher === 'electronico' ? '2px solid #3b82f6' : '2px solid #d1d5db'
+                }}>
+                  <input
+                    type="radio"
+                    name="tipoVoucher"
+                    value="electronico"
+                    checked={modalVoucher.voucher.tipoVoucher === 'electronico'}
+                    onChange={(e) => setModalVoucher(prev => ({
+                      ...prev,
+                      voucher: { ...prev.voucher, tipoVoucher: e.target.value }
+                    }))}
+                    style={{ margin: 0 }}
+                  />
+                  <span style={{ fontWeight: '500' }}>💻 Voucher Electrónico</span>
+                </label>
+                <label style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  backgroundColor: modalVoucher.voucher.tipoVoucher === 'fisico' ? '#fef3c7' : 'transparent',
+                  border: modalVoucher.voucher.tipoVoucher === 'fisico' ? '2px solid #f59e0b' : '2px solid #d1d5db'
+                }}>
+                  <input
+                    type="radio"
+                    name="tipoVoucher"
+                    value="fisico"
+                    checked={modalVoucher.voucher.tipoVoucher === 'fisico'}
+                    onChange={(e) => setModalVoucher(prev => ({
+                      ...prev,
+                      voucher: { ...prev.voucher, tipoVoucher: e.target.value }
+                    }))}
+                    style={{ margin: 0 }}
+                  />
+                  <span style={{ fontWeight: '500' }}>📄 Voucher Físico</span>
+                </label>
+              </div>
+            </div>
+            
             <div style={{
               display: 'grid',
               gridTemplateColumns: '1fr 1fr',
@@ -5945,14 +6712,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   fontWeight: 'bold',
                   color: '#374151'
                 }}>
-                  📅 Fecha y Hora
+                  📅 Fecha y Hora de Inicio
                 </label>
                 <input
-                  type="text"
-                  value={modalVoucher.voucher.fechaHora}
+                  type="datetime-local"
+                  value={modalVoucher.voucher.fechaHoraInicio}
                   onChange={(e) => setModalVoucher(prev => ({
                     ...prev,
-                    voucher: { ...prev.voucher, fechaHora: e.target.value }
+                    voucher: { ...prev.voucher, fechaHoraInicio: e.target.value }
                   }))}
                   style={{
                     width: '100%',
@@ -5971,7 +6738,33 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   fontWeight: 'bold',
                   color: '#374151'
                 }}>
-                  👤 Nombre del Cliente
+                  📅 Fecha y Hora Final
+                </label>
+                <input
+                  type="datetime-local"
+                  value={modalVoucher.voucher.fechaHoraFinal}
+                  onChange={(e) => setModalVoucher(prev => ({
+                    ...prev,
+                    voucher: { ...prev.voucher, fechaHoraFinal: e.target.value }
+                  }))}
+                  style={{
+                    width: '100%',
+                    padding: '10px',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '6px',
+                    fontSize: '14px'
+                  }}
+                />
+              </div>
+
+              <div style={{ gridColumn: '1 / -1' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: '5px',
+                  fontWeight: 'bold',
+                  color: '#374151'
+                }}>
+                  👤 Nombre del Cliente <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="text"
@@ -5987,32 +6780,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     borderRadius: '6px',
                     fontSize: '14px'
                   }}
-                />
-              </div>
-
-              <div>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '5px',
-                  fontWeight: 'bold',
-                  color: '#374151'
-                }}>
-                  📞 Teléfono
-                </label>
-                <input
-                  type="text"
-                  value={modalVoucher.voucher.telefono}
-                  onChange={(e) => setModalVoucher(prev => ({
-                    ...prev,
-                    voucher: { ...prev.voucher, telefono: e.target.value }
-                  }))}
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '14px'
-                  }}
+                  placeholder="Ingrese el nombre del cliente"
                 />
               </div>
 
@@ -6039,6 +6807,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     borderRadius: '6px',
                     fontSize: '14px'
                   }}
+                  placeholder="Ingrese el valor"
                 />
               </div>
 
@@ -6054,16 +6823,16 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                 <input
                   type="text"
                   value={modalVoucher.voucher.numeroUnidad}
-                  onChange={(e) => setModalVoucher(prev => ({
-                    ...prev,
-                    voucher: { ...prev.voucher, numeroUnidad: e.target.value }
-                  }))}
+                  readOnly
                   style={{
                     width: '100%',
                     padding: '10px',
                     border: '1px solid #d1d5db',
                     borderRadius: '6px',
-                    fontSize: '14px'
+                    fontSize: '14px',
+                    backgroundColor: '#f9fafb',
+                    color: '#6b7280',
+                    cursor: 'not-allowed'
                   }}
                 />
               </div>
@@ -6075,7 +6844,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   fontWeight: 'bold',
                   color: '#374151'
                 }}>
-                  🏢 Empresa
+                  🏢 Empresa <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <select
                   value={modalVoucher.voucher.empresa}
@@ -6089,8 +6858,11 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     border: '1px solid #d1d5db',
                     borderRadius: '6px',
                     fontSize: '14px',
-                    backgroundColor: 'white'
+                    backgroundColor: 'white',
+                    cursor: 'pointer'
                   }}
+                  required
+                  autoComplete="off"
                 >
                   <option value="">Seleccione una empresa</option>
                   {empresasVoucher.map((empresa, index) => (
@@ -6100,6 +6872,37 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   ))}
                 </select>
               </div>
+
+              {/* Campo condicional para número de voucher físico */}
+              {modalVoucher.voucher.tipoVoucher === 'fisico' && (
+                <div style={{ gridColumn: '1 / -1' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: '5px',
+                    fontWeight: 'bold',
+                    color: '#374151'
+                  }}>
+                    🔢 Número de Voucher Físico <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={modalVoucher.voucher.numeroVoucherFisico}
+                    onChange={(e) => setModalVoucher(prev => ({
+                      ...prev,
+                      voucher: { ...prev.voucher, numeroVoucherFisico: e.target.value }
+                    }))}
+                    style={{
+                      width: '100%',
+                      padding: '10px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '14px'
+                    }}
+                    placeholder="Ingrese el número del voucher físico"
+                    autoComplete="off"
+                  />
+                </div>
+              )}
 
               <div style={{ gridColumn: '1 / -1' }}>
                 <label style={{
@@ -6124,6 +6927,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     borderRadius: '6px',
                     fontSize: '14px'
                   }}
+                  autoComplete="off"
                 />
               </div>
 
@@ -6134,7 +6938,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   fontWeight: 'bold',
                   color: '#374151'
                 }}>
-                  🎯 Destino
+                  🎯 Destino <span style={{ color: '#ef4444' }}>*</span>
                 </label>
                 <input
                   type="text"
@@ -6150,6 +6954,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     borderRadius: '6px',
                     fontSize: '14px'
                   }}
+                  placeholder="Ingrese el destino (campo obligatorio)"
+                  required
+                  autoComplete="off"
                 />
               </div>
 
@@ -6177,33 +6984,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     fontSize: '14px',
                     resize: 'vertical'
                   }}
-                />
-              </div>
-
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label style={{
-                  display: 'block',
-                  marginBottom: '5px',
-                  fontWeight: 'bold',
-                  color: '#374151'
-                }}>
-                  🚗 Información del Viaje
-                </label>
-                <textarea
-                  value={modalVoucher.voucher.informacionViaje}
-                  onChange={(e) => setModalVoucher(prev => ({
-                    ...prev,
-                    voucher: { ...prev.voucher, informacionViaje: e.target.value }
-                  }))}
-                  rows="3"
-                  style={{
-                    width: '100%',
-                    padding: '10px',
-                    border: '1px solid #d1d5db',
-                    borderRadius: '6px',
-                    fontSize: '14px',
-                    resize: 'vertical'
-                  }}
+                  autoComplete="off"
                 />
               </div>
             </div>
@@ -6373,6 +7154,11 @@ function ReservasContent({ operadorAutenticado }) {
         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
         origenReserva: true,
         reservaId: reserva.id,
+        motivoReserva: reserva.motivo || '', // Preservar el motivo de la reserva
+        // Información de empresa y autorización preservada de la reserva
+        tipoEmpresa: reserva.tipoEmpresa || 'Efectivo',
+        autorizacionPreGenerada: reserva.autorizacionPreGenerada || '',
+        autorizacion: reserva.autorizacion || null,
       };
 
       const docRef = await addDoc(collection(db, 'pedidoEnCurso'), pedidoEnCursoData);
@@ -8118,9 +8904,9 @@ function ReportesContent() {
         if (totalPedidosActivos < 10) {
           console.log('📄 Cargando datos adicionales desde otras colecciones...');
           
-          // Cargar desde pedidosDisponibles como respaldo
+          // Cargar desde pedidosDisponibles1 como respaldo
           try {
-            const pedidosDisponiblesRef = collection(db, 'pedidosDisponibles');
+            const pedidosDisponiblesRef = collection(db, 'pedidosDisponibles1');
             const pedidosSnapshot = await getDocs(pedidosDisponiblesRef);
             
             pedidosSnapshot.forEach((doc) => {
@@ -8153,7 +8939,7 @@ function ReportesContent() {
               }
             });
           } catch (error) {
-            console.log('⚠️ Error al cargar pedidosDisponibles:', error.message);
+            console.log('⚠️ Error al cargar pedidosDisponibles1:', error.message);
           }
           
           // Cargar desde pedidoEnCurso como respaldo
@@ -9999,7 +10785,7 @@ function VouchersContent({ operadorAutenticado }) {
               <tbody>
                 {vouchersFiltrados.map((voucher) => (
                   <tr key={voucher.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                    <td style={{ padding: '12px', fontSize: '14px', fontWeight: '600', color: '#3b82f6' }}>
+                    <td>
                       {voucher.numeroAutorizacion}
                     </td>
                     <td style={{ padding: '12px', fontSize: '14px', fontWeight: '500', color: '#1f2937' }}>
@@ -10045,7 +10831,7 @@ function VouchersContent({ operadorAutenticado }) {
                       </span>
                     </td>
                     <td style={{ padding: '12px', fontSize: '14px', fontWeight: '500', color: '#059669' }}>
-                      ${voucher.valor}
+                      {'$'}{voucher.valor}
                     </td>
                     <td style={{ padding: '12px', fontSize: '14px', color: '#6b7280' }}>
                       {formatearFecha(voucher.fechaCreacion)}
@@ -10186,7 +10972,7 @@ function VouchersContent({ operadorAutenticado }) {
                 <div>
                   <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Valor</label>
                   <div style={{ fontSize: '18px', fontWeight: '600', color: '#059669' }}>
-                    ${voucherSeleccionado.valor}
+                    {'$'}{voucherSeleccionado.valor}
                   </div>
                 </div>
                 <div>
