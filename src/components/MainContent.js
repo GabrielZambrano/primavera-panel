@@ -337,12 +337,63 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         console.log('Siguiente número calculado:', siguienteNumero);
         setSiguienteNumeroAutorizacion(siguienteNumero);
       } else {
-        console.log('No se encontraron vouchers, usando número inicial: 40000');
         setSiguienteNumeroAutorizacion(40000);
       }
     } catch (error) {
       console.error('Error al obtener número de autorización:', error);
       setSiguienteNumeroAutorizacion(40000);
+    }
+  };
+
+  // Función para obtener la siguiente autorización sin generarla (solo para mostrar)
+  const obtenerSiguienteAutorizacionParaMostrar = async () => {
+    try {
+      // Obtener el contador actual de autorizacionSecuencia
+      const secuenciaRef = doc(db, 'autorizacionSecuencia', 'contador');
+      const secuenciaDoc = await getDoc(secuenciaRef);
+      
+      let siguienteNumero = 200; // Número inicial según tu requerimiento
+      
+      if (secuenciaDoc.exists()) {
+        const data = secuenciaDoc.data();
+        siguienteNumero = (data.numero || 199) + 1;
+      }
+
+      return siguienteNumero;
+    } catch (error) {
+      console.error('Error al obtener siguiente autorización para mostrar:', error);
+      return 200;
+    }
+  };
+
+
+  
+
+  // Función para obtener y reservar el siguiente número de autorización (solo para vouchers completos)
+  const obtenerSiguienteAutorizacion = async () => {
+    try {
+      // Obtener el contador actual de autorizacionSecuencia
+      const secuenciaRef = doc(db, 'autorizacionSecuencia', 'contador');
+      const secuenciaDoc = await getDoc(secuenciaRef);
+      
+      let siguienteNumero = 200; // Número inicial según tu requerimiento
+      
+      if (secuenciaDoc.exists()) {
+        const data = secuenciaDoc.data();
+        siguienteNumero = (data.numero || 199) + 1;
+      }
+
+      // Actualizar el contador en autorizacionSecuencia
+      await setDoc(secuenciaRef, {
+        numero: siguienteNumero,
+        ultimaActualizacion: new Date()
+      }, { merge: true });
+
+      console.log('✅ Autorización generada y contador actualizado:', siguienteNumero);
+      return siguienteNumero;
+    } catch (error) {
+      console.error('Error al obtener siguiente autorización:', error);
+      return 200;
     }
   };
 
@@ -587,39 +638,30 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   const [tipoEmpresa, setTipoEmpresa] = useState('Efectivo');
   const [modoSeleccionUI, setModoSeleccionUI] = useState('Manual');
   
-  // Estado para autorización pre-generada
+  // Estado para autorización pre-generada (ya no se usa, se genera en tiempo real)
   const [autorizacionPreGenerada, setAutorizacionPreGenerada] = useState('');
+  
+  // Estado para mostrar la siguiente autorización
+  const [siguienteAutorizacion, setSiguienteAutorizacion] = useState(null);
 
-  // useEffect para pre-generar autorización cuando el tipo de empresa no sea Efectivo
+  // useEffect para actualizar la siguiente autorización cuando se seleccione una empresa
   useEffect(() => {
-    const preGenerarAutorizacion = async () => {
+    const actualizarSiguienteAutorizacion = async () => {
       if (tipoEmpresa && tipoEmpresa !== 'Efectivo') {
         try {
-          // Obtener el siguiente número de autorización
-          const vouchersRef = collection(db, 'voucherCorporativos');
-          const q = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
-          const querySnapshot = await getDocs(q);
-          
-          let siguienteNumero = 40000;
-          if (!querySnapshot.empty) {
-            const ultimoVoucher = querySnapshot.docs[0].data();
-            siguienteNumero = Math.max(40000, (ultimoVoucher.numeroAutorizacion || 39999) + 1);
-          }
-          
-          setAutorizacionPreGenerada(siguienteNumero.toString());
-          console.log(`✅ Autorización pre-generada: ${siguienteNumero} para empresa: ${tipoEmpresa}`);
+          const siguiente = await obtenerSiguienteAutorizacionParaMostrar();
+          setSiguienteAutorizacion(siguiente);
         } catch (error) {
-          console.error('❌ Error al pre-generar autorización:', error);
-          setAutorizacionPreGenerada('');
+          console.error('Error al obtener siguiente autorización:', error);
+          setSiguienteAutorizacion(null);
         }
       } else {
-        // Si es Efectivo, limpiar la autorización pre-generada
-        setAutorizacionPreGenerada('');
+        setSiguienteAutorizacion(null);
       }
     };
 
-    preGenerarAutorizacion();
-  }, [tipoEmpresa]); // Se ejecuta cada vez que cambie tipoEmpresa
+    actualizarSiguienteAutorizacion();
+  }, [tipoEmpresa]);
 
   // Función para actualizar la configuración en la colección
   const actualizarConfiguracion = async (nuevoEstado) => {
@@ -806,12 +848,12 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         `🕒 Fecha/Hora: ${fechaTxt || 'N/D'}`,
         `📝 Motivo: ${reserva.motivo || 'N/D'}`,
         reserva.tipoEmpresa && reserva.tipoEmpresa !== 'Efectivo' ? `🏢 Empresa: ${reserva.tipoEmpresa}` : null,
-        reserva.autorizacionPreGenerada ? `🔑 Autorización: ${reserva.autorizacionPreGenerada}` : null,
+        reserva.autorizacion ? `🔑 Autorización: ${reserva.autorizacion}` : null,
         reserva.operador?.nombre ? `👨‍💼 Operador: ${reserva.operador.nombre}` : null
       ].filter(Boolean).join('\n');
 
       // Enviar al grupo (sin teléfono)
-      await postFormUrlEncoded('http://84.46.245.131:3001/send/group/message', {
+      await postFormUrlEncoded('http://147.93.130.33:3019/app1/send/message', {
         to: '120363343871245265',
         message: msgGrupo
       });
@@ -829,7 +871,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           reserva.tipoEmpresa && reserva.tipoEmpresa !== 'Efectivo' ? `🏢 Empresa: ${reserva.tipoEmpresa}` : null
         ].filter(Boolean).join('\n');
 
-        await postFormUrlEncoded('http://84.46.245.131:3001/send/message', {
+        await postFormUrlEncoded('http://147.93.130.33:3019/app1/send/message', {
           to: toNumber,
           message: msgCliente
         });
@@ -887,7 +929,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         createdAt: new Date(),
         // Información de empresa y autorización (si aplica)
         tipoEmpresa: tipoEmpresa || 'Efectivo',
-        autorizacionPreGenerada: tipoEmpresa && tipoEmpresa !== 'Efectivo' ? autorizacionPreGenerada : '',
+        autorizacion: tipoEmpresa && tipoEmpresa !== 'Efectivo' ? await obtenerSiguienteAutorizacion() : null,
         operador: operadorAutenticado ? {
           id: operadorAutenticado.id || '',
           nombre: operadorAutenticado.nombre || '',
@@ -2068,7 +2110,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
          // Campo de autorización (pre-generado opcionalmente desde el botón de voucher o automáticamente para empresas)
          autorizacion: preRegistroVoucher?.activo ? preRegistroVoucher.numeroAutorizacion : 
-                      (tipoEmpresa !== 'Efectivo' && autorizacionPreGenerada ? autorizacionPreGenerada : null),
+                      (tipoEmpresa !== 'Efectivo' ? await obtenerSiguienteAutorizacion() : null),
          modoSeleccion: modoSeleccionUI, // Nuevo campo para el modo de selección UI
          tipoEmpresa: tipoEmpresa // Nuevo campo para empresa/efectivo
        };
@@ -2085,26 +2127,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       try {
         if (preRegistroVoucher?.activo) {
           setPreRegistroVoucher({ numeroAutorizacion: null, activo: false });
-        }
-        
-        // Si se usó autorización automática para empresa, actualizar el contador en Firestore
-        if (tipoEmpresa !== 'Efectivo' && autorizacionPreGenerada) {
-          console.log(`✅ Utilizando autorización automática: ${autorizacionPreGenerada} para empresa: ${tipoEmpresa}`);
-          
-          // Registrar el uso de la autorización en voucherCorporativos para mantener el contador
-          await addDoc(collection(db, 'voucherCorporativos'), {
-            numeroAutorizacion: parseInt(autorizacionPreGenerada),
-            cliente: nombre || '',
-            telefono: telefono || '',
-            empresa: tipoEmpresa,
-            fecha: new Date(),
-            tipo: 'autorización_automática',
-            operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
-            estado: 'utilizada'
-          });
-          
-          // Limpiar la autorización pre-generada para que se genere una nueva
-          setAutorizacionPreGenerada('');
         }
       } catch (error) {
         console.error('❌ Error al manejar autorización:', error);
@@ -2287,12 +2309,12 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          viajes: unidad || '',
          tarifaSeleccionada: true,
          modoSeleccion: 'manual',
-         modoAsignacion: 'manual', // Campo adicional para indicar asignación manual
-         tipoEmpresa: tipoEmpresa, // Nuevo campo para empresa/efectivo
-         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
-         // Campo de autorización (pre-generado opcionalmente desde el botón de voucher o automáticamente para empresas)
-         autorizacion: preRegistroVoucher?.activo ? preRegistroVoucher.numeroAutorizacion : 
-                      (tipoEmpresa !== 'Efectivo' && autorizacionPreGenerada ? autorizacionPreGenerada : null)
+                 modoAsignacion: 'manual', // Campo adicional para indicar asignación manual
+        tipoEmpresa: tipoEmpresa, // Nuevo campo para empresa/efectivo
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        // Campo de autorización (pre-generado opcionalmente desde el botón de voucher o automáticamente para empresas)
+        autorizacion: preRegistroVoucher?.activo ? preRegistroVoucher.numeroAutorizacion : 
+                     (tipoEmpresa !== 'Efectivo' ? await obtenerSiguienteAutorizacion() : null)
        };
 
        // Guardar directamente en la colección "pedidoEnCurso"
@@ -2305,26 +2327,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       try {
         if (preRegistroVoucher?.activo) {
           setPreRegistroVoucher({ numeroAutorizacion: null, activo: false });
-        }
-        
-        // Si se usó autorización automática para empresa, actualizar el contador en Firestore
-        if (tipoEmpresa !== 'Efectivo' && autorizacionPreGenerada) {
-          console.log(`✅ Utilizando autorización automática: ${autorizacionPreGenerada} para empresa: ${tipoEmpresa}`);
-          
-          // Registrar el uso de la autorización en voucherCorporativos para mantener el contador
-          await addDoc(collection(db, 'voucherCorporativos'), {
-            numeroAutorizacion: parseInt(autorizacionPreGenerada),
-            cliente: nombre || '',
-            telefono: telefono || '',
-            empresa: tipoEmpresa,
-            fecha: new Date(),
-            tipo: 'autorización_automática',
-            operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
-            estado: 'utilizada'
-          });
-          
-          // Limpiar la autorización pre-generada para que se genere una nueva
-          setAutorizacionPreGenerada('');
         }
       } catch (error) {
         console.error('❌ Error al manejar autorización:', error);
@@ -2680,8 +2682,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     try {
       const pedido = modalAccionesPedido.pedido;
       
-      // Obtener el siguiente número de autorización
-      await obtenerSiguienteNumeroAutorizacion();
+      // Usar la autorización existente del pedido o generar una nueva si no existe
+      if (!pedido.autorizacion) {
+        await obtenerSiguienteNumeroAutorizacion();
+      }
       
       // Preparar datos del voucher
       const fechaActual = new Date();
@@ -2700,7 +2704,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         numeroUnidad: pedido.unidad || '', // No editable
         empresa: pedido.tipoEmpresa || '', // Cargar automáticamente la empresa del pedido
         tipoVoucher: 'electronico', // Por defecto electrónico
-        numeroVoucherFisico: '' // Solo para vouchers físicos
+        numeroVoucherFisico: '', // Solo para vouchers físicos
+        numeroAutorizacion: pedido.autorizacion || siguienteNumeroAutorizacion // Incluir la autorización del pedido
       };
 
       setModalVoucher({
@@ -2713,7 +2718,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         setIsCollapsed(true);
       }
 
-      cerrarModalAccionesPedido();
+      // NO cerrar el modal de acciones del pedido aquí, se cerrará después de generar el voucher
     } catch (error) {
       console.error('❌ Error al preparar voucher:', error);
       setModal({ open: true, success: false, message: 'Error al preparar el voucher.' });
@@ -2834,6 +2839,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   // Función para guardar voucher corporativo desde el modal
   const guardarVoucherCorporativo = async () => {
     try {
+      // Guardar información del pedido al inicio para evitar que se pierda
+      const pedidoInfo = modalAccionesPedido.pedido;
+      const coleccionInfo = modalAccionesPedido.coleccion;
+      
+      console.log('🔍 Información del pedido al inicio:', pedidoInfo);
+      console.log('🔍 Colección del pedido al inicio:', coleccionInfo);
+
       // Validar campos requeridos
       if (!modalVoucher.voucher.nombreCliente || !modalVoucher.voucher.destino || !modalVoucher.voucher.empresa) {
         setModal({ open: true, success: false, message: 'Por favor complete todos los campos requeridos (Nombre del Cliente, Destino y Empresa).' });
@@ -2846,8 +2858,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         return;
       }
 
-      // Usar el número de autorización calculado previamente
-      const numeroAutorizacion = siguienteNumeroAutorizacion;
+      // Usar la autorización del voucher, del pedido, o la calculada previamente
+      const numeroAutorizacion = modalVoucher.voucher?.numeroAutorizacion || pedidoInfo?.autorizacion || siguienteNumeroAutorizacion;
       console.log('Usando número de autorización:', numeroAutorizacion);
 
       // Crear el voucher corporativo
@@ -2865,10 +2877,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
       console.log('✅ Voucher corporativo guardado con número:', numeroAutorizacion);
       
-      // Si hay un pedido asociado, moverlo a todosLosViajes y eliminarlo de pedidoEnCurso
-      if (modalAccionesPedido.pedido && modalAccionesPedido.coleccion === 'pedidoEnCurso') {
+      // Si hay un pedido asociado, moverlo a todosLosViajes y eliminarlo de la colección original
+      if (pedidoInfo) {
         try {
-          const pedidoRef = doc(db, modalAccionesPedido.coleccion, modalAccionesPedido.pedido.id);
+          console.log('🔄 Procesando pedido para voucher:', pedidoInfo.id);
+          console.log('📁 Colección del pedido:', coleccionInfo);
+          
+          const pedidoRef = doc(db, coleccionInfo, pedidoInfo.id);
           
           // Crear datos del viaje finalizado
           const fechaActual = new Date();
@@ -2879,28 +2894,47 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           }).replace(/\//g, '-');
 
           const viajeFinalizadoData = {
-            ...modalAccionesPedido.pedido,
+            ...pedidoInfo,
             estado: 'Finalizado con Voucher',
             fechaFinalizacion: fechaActual,
-            voucherGenerado: numeroAutorizacion,
+            fechaRegistroFinalizacion: fechaActual,
+            motivoFinalizacion: 'Voucher corporativo generado',
+            numeroAutorizacionVoucher: numeroAutorizacion,
+            voucherData: {
+              numeroAutorizacion: numeroAutorizacion,
+              fechaCreacion: fechaActual,
+              estado: 'Activo'
+            },
+            esVoucher: true,
+            colorFondo: '#fef3c7', // Color de fondo amarillo para vouchers
             operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
           };
 
           // Guardar en todosLosViajes
-          const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
+          const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${pedidoInfo.id}`;
           await setDoc(doc(db, rutaTodosLosViajes), viajeFinalizadoData);
+          console.log('✅ Pedido guardado en todosLosViajes:', rutaTodosLosViajes);
 
-          // Eliminar de pedidoEnCurso
+          // Eliminar de la colección original (pedidoEnCurso o pedidosDisponibles1)
+          console.log('🗑️ Eliminando pedido de:', coleccionInfo, 'ID:', pedidoInfo.id);
           await deleteDoc(pedidoRef);
+          console.log('✅ Pedido eliminado exitosamente de:', coleccionInfo);
 
-          console.log('✅ Pedido movido a todosLosViajes y eliminado de pedidoEnCurso');
+          // Cerrar el modal de acciones del pedido después de eliminar
+          setModalAccionesPedido({ open: false, pedido: null, coleccion: null });
+
         } catch (error) {
           console.error('❌ Error al procesar el pedido:', error);
+          console.error('❌ Detalles del error:', error.message);
         }
+      } else {
+        console.log('⚠️ No hay pedido asociado para procesar');
       }
       
-      // Actualizar el siguiente número de autorización
-      setSiguienteNumeroAutorizacion(numeroAutorizacion + 1);
+      // Actualizar el siguiente número de autorización solo si se generó una nueva
+      if (!pedidoInfo?.autorizacion) {
+        setSiguienteNumeroAutorizacion(numeroAutorizacion + 1);
+      }
       
       setModal({ 
         open: true, 
@@ -3067,40 +3101,11 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         return;
       }
 
-      // Obtener el siguiente número disponible
-      const vouchersRef = collection(db, 'voucherCorporativos');
-      const qUltimo = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
-      let numeroAutorizacion = 40000;
-      try {
-        const querySnapshot = await getDocs(qUltimo);
-        if (!querySnapshot.empty) {
-          const ultimo = querySnapshot.docs[0].data();
-          numeroAutorizacion = Math.max(40000, (ultimo.numeroAutorizacion || 39999) + 1);
-        }
-      } catch {}
+      // Obtener el siguiente número de autorización usando autorizacionSecuencia
+      const numeroAutorizacion = await obtenerSiguienteAutorizacion();
 
-      // Registrar pre-registro
-      let operadorNombre = null;
-      try {
-        const almacenado = localStorage.getItem('operadorAutenticado');
-        if (almacenado) {
-          const op = JSON.parse(almacenado);
-          operadorNombre = op?.nombre || null;
-        }
-      } catch {}
-
-      const preRegistro = {
-        nombreCliente: pedido.nombreCliente || pedido.codigo || '',
-        telefono: pedido.telefono || '',
-        empresa: null,
-        createdAt: new Date(),
-        numeroAutorizacion,
-        origen: 'pedidoEnCurso',
-        pedidoId: pedido.id,
-        estado: 'pre-registrado',
-        operador: operadorNombre || null
-      };
-      await addDoc(vouchersRef, preRegistro);
+      // La función obtenerSiguienteAutorizacion ya registra en voucherCorporativos
+      // Solo necesitamos actualizar el pedido con la autorización
 
       // Actualizar el pedido en curso
       const pedidoRef = doc(db, 'pedidoEnCurso', pedido.id);
@@ -3128,42 +3133,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         return;
       }
 
-      // Obtener el siguiente número de autorización desde voucherCorporativos
-      const vouchersRef = collection(db, 'voucherCorporativos');
-      const qUltimo = query(vouchersRef, orderBy('numeroAutorizacion', 'desc'), limit(1));
-      let numeroAutorizacion = 40000;
-      try {
-        const querySnapshot = await getDocs(qUltimo);
-        if (!querySnapshot.empty) {
-          const ultimo = querySnapshot.docs[0].data();
-          numeroAutorizacion = Math.max(40000, (ultimo.numeroAutorizacion || 39999) + 1);
-        }
-      } catch (e) {
-        // Si falla, usar base 40000
-        numeroAutorizacion = 40000;
-      }
-
-      // Registrar pre-registro en voucherCorporativos para reservar el número
-      let operadorNombre = null;
-      try {
-        const almacenado = localStorage.getItem('operadorAutenticado');
-        if (almacenado) {
-          const op = JSON.parse(almacenado);
-          operadorNombre = op?.nombre || null;
-        }
-      } catch {}
-      const preRegistro = {
-        nombreCliente: pedido.nombreCliente || pedido.codigo || '',
-        telefono: pedido.telefono || '',
-        empresa: null,
-        createdAt: new Date(),
-        numeroAutorizacion,
-        origen: 'pedidoDisponible',
-        pedidoId: pedido.id,
-        estado: 'pre-registrado',
-        operador: operadorNombre || null
-      };
-      await addDoc(vouchersRef, preRegistro);
+      // Obtener el siguiente número de autorización usando autorizacionSecuencia
+      const numeroAutorizacion = await obtenerSiguienteAutorizacion();
 
       // Guardar en el pedido disponible
       const pedidoRef = doc(db, 'pedidosDisponibles1', pedido.id);
@@ -4048,8 +4019,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           </div>
         </div>
 
-        {/* Indicador de autorización pre-generada */}
-        {autorizacionPreGenerada && tipoEmpresa !== 'Efectivo' && (
+        {/* Indicador de tipo de empresa */}
+        {tipoEmpresa !== 'Efectivo' && (
           <div style={{
             padding: '10px 15px',
             marginBottom: '15px',
@@ -4061,8 +4032,12 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             fontWeight: 'bold',
             textAlign: 'center'
           }}>
-            🎫 Autorización pre-generada: <span style={{ color: '#1976d2' }}>{autorizacionPreGenerada}</span> 
-            para empresa: <span style={{ color: '#1976d2' }}>{tipoEmpresa}</span>
+            🏢 Empresa: <span style={{ color: '#1976d2' }}>{tipoEmpresa}</span>
+            {siguienteAutorizacion && (
+              <div style={{ marginTop: '5px', fontSize: '14px' }}>
+                🔑 Siguiente autorización: <span style={{ color: '#d32f2f', fontWeight: 'bold' }}>{siguienteAutorizacion}</span>
+              </div>
+            )}
           </div>
         )}
 
@@ -4092,6 +4067,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             onClick={preRegistrarVoucher}
             disabled={!telefono.trim() || !nombre.trim()}
             style={{
+              display: 'none', // Ocultar el botón
               padding: '12px 16px',
               background: (!telefono.trim() || !nombre.trim()) ? '#9ca3af' : '#7c3aed',
               color: 'white',
@@ -6087,23 +6063,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                         }}
                       />
                     </div>
-                    <div>
-                      <div style={{ fontSize: 12, color: '#374151', fontWeight: 600 }}>Autorización</div>
-                      <input
-                        type="text"
-                        value={autorizacionPreGenerada}
-                        readOnly
-                        style={{
-                          width: '100%',
-                          padding: '8px 10px',
-                          border: '1px solid #d1d5db',
-                          borderRadius: 6,
-                          background: '#f8fafc',
-                          color: '#374151',
-                          fontWeight: 500
-                        }}
-                      />
-                    </div>
                   </div>
                 </div>
               )}
@@ -6623,7 +6582,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     fontWeight: 'bold',
                     textAlign: 'center'
                   }}>
-                    {siguienteNumeroAutorizacion}
+                    {modalVoucher.voucher?.numeroAutorizacion || modalAccionesPedido.pedido?.autorizacion || siguienteNumeroAutorizacion}
                   </div>
                 </div>
               </div>
@@ -7078,6 +7037,34 @@ function ReservasContent({ operadorAutenticado }) {
 
   const validarTokenConductor = (token) => token && String(token).trim().length >= 100;
 
+  // Función para obtener y reservar el siguiente número de autorización
+  const obtenerSiguienteAutorizacion = async () => {
+    try {
+      // Obtener el contador actual de autorizacionSecuencia
+      const secuenciaRef = doc(db, 'autorizacionSecuencia', 'contador');
+      const secuenciaDoc = await getDoc(secuenciaRef);
+      
+      let siguienteNumero = 200; // Número inicial según tu requerimiento
+      
+      if (secuenciaDoc.exists()) {
+        const data = secuenciaDoc.data();
+        siguienteNumero = (data.numero || 199) + 1;
+      }
+
+      // Actualizar el contador en autorizacionSecuencia
+      await setDoc(secuenciaRef, {
+        numero: siguienteNumero,
+        ultimaActualizacion: new Date()
+      }, { merge: true });
+
+      console.log('✅ Autorización generada y contador actualizado:', siguienteNumero);
+      return siguienteNumero;
+    } catch (error) {
+      console.error('Error al obtener siguiente autorización:', error);
+      return 200;
+    }
+  };
+
   const asignarUnidad = async (reserva) => {
     try {
       const unidad = (unidadAsignar[reserva.id] || '').trim();
@@ -7103,7 +7090,7 @@ function ReservasContent({ operadorAutenticado }) {
       // Preparar documento para pedidoEnCurso
       const coordenadasFinales = reserva.coordenadas || '-0.2298500,-78.5249500';
       const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
-      const fecha = new Date();
+      const fecha = reserva.fechaHoraReserva || new Date(); // Usar la fecha de la reserva original
       const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
 
       const pedidoEnCursoData = {
@@ -7155,10 +7142,10 @@ function ReservasContent({ operadorAutenticado }) {
         origenReserva: true,
         reservaId: reserva.id,
         motivoReserva: reserva.motivo || '', // Preservar el motivo de la reserva
+        fechaHoraReserva: reserva.fechaHoraReserva, // Preservar la fecha/hora original de la reserva
         // Información de empresa y autorización preservada de la reserva
         tipoEmpresa: reserva.tipoEmpresa || 'Efectivo',
-        autorizacionPreGenerada: reserva.autorizacionPreGenerada || '',
-        autorizacion: reserva.autorizacion || null,
+        autorizacion: reserva.autorizacion || (reserva.tipoEmpresa !== 'Efectivo' ? await obtenerSiguienteAutorizacion() : null),
       };
 
       const docRef = await addDoc(collection(db, 'pedidoEnCurso'), pedidoEnCursoData);
@@ -7444,7 +7431,7 @@ function ConductoresContent() {
 
       // Enviar notificación a API externa (no bloqueante)
       try {
-        const apiUrl = process.env.REACT_APP_ESTATUS_API_URL || 'http://84.46.245.131:3001/send/group/message';
+        const apiUrl = process.env.REACT_APP_ESTATUS_API_URL || 'http://147.93.130.33:3019/app1/send/message';
         const groupTo = process.env.REACT_APP_GROUP_TO_ID || '120363343871245265';
         const accion = nuevoEstatus ? 'Activación' : 'Suspensión';
         // Obtener operador autenticado (nombre desde localStorage o email desde auth)
@@ -10303,13 +10290,16 @@ function VouchersContent({ operadorAutenticado }) {
   const [voucherSeleccionado, setVoucherSeleccionado] = useState(null);
   const [mostrarModal, setMostrarModal] = useState(false);
   const [siguienteNumeroAutorizacion, setSiguienteNumeroAutorizacion] = useState(40000);
+  const [modoEdicion, setModoEdicion] = useState(false);
+  const [voucherEditado, setVoucherEditado] = useState({});
 
   // Cargar vouchers
   const cargarVouchers = async () => {
     try {
       setLoading(true);
       const vouchersRef = collection(db, 'voucherCorporativos');
-      const q = query(vouchersRef, orderBy('fechaCreacion', 'desc'));
+      // Solo traer vouchers con estado "Activo" (completos)
+      const q = query(vouchersRef, where('estado', '==', 'Activo'));
       const querySnapshot = await getDocs(q);
       
       const vouchersData = querySnapshot.docs.map(doc => ({
@@ -10317,6 +10307,14 @@ function VouchersContent({ operadorAutenticado }) {
         ...doc.data()
       }));
       
+      // Ordenar por fecha de creación en el cliente
+      vouchersData.sort((a, b) => {
+        const fechaA = a.fechaCreacion?.toDate ? a.fechaCreacion.toDate() : new Date(a.fechaCreacion);
+        const fechaB = b.fechaCreacion?.toDate ? b.fechaCreacion.toDate() : new Date(b.fechaCreacion);
+        return fechaB - fechaA; // Orden descendente
+      });
+      
+      console.log('✅ Vouchers cargados:', vouchersData.length, 'vouchers con estado Activo');
       setVouchers(vouchersData);
     } catch (error) {
       console.error('Error al cargar vouchers:', error);
@@ -10327,7 +10325,13 @@ function VouchersContent({ operadorAutenticado }) {
 
   // Aplicar filtros
   const aplicarFiltros = () => {
-    return vouchers.filter(voucher => {
+    console.log('🔍 Aplicando filtros a vouchers:', {
+      totalVouchers: vouchers.length,
+      filtros: filtros,
+      vouchers: vouchers.map(v => ({ id: v.id, numeroAutorizacion: v.numeroAutorizacion, estado: v.estado, empresa: v.empresa }))
+    });
+    
+    const resultado = vouchers.filter(voucher => {
       const cumpleEmpresa = !filtros.empresa || 
         voucher.empresa?.toLowerCase().includes(filtros.empresa.toLowerCase());
       
@@ -10349,8 +10353,19 @@ function VouchersContent({ operadorAutenticado }) {
         cumpleFecha = cumpleFecha && fechaVoucher <= fechaFin;
       }
       
-      return cumpleEmpresa && cumpleNumeroAutorizacion && cumpleFecha;
+      const cumple = cumpleEmpresa && cumpleNumeroAutorizacion && cumpleFecha;
+      console.log(`🔍 Voucher ${voucher.numeroAutorizacion}:`, {
+        cumpleEmpresa,
+        cumpleNumeroAutorizacion,
+        cumpleFecha,
+        cumple
+      });
+      
+      return cumple;
     });
+    
+    console.log('🔍 Resultado filtros:', resultado.length, 'vouchers encontrados');
+    return resultado;
   };
 
   // Formatear fecha
@@ -10382,6 +10397,51 @@ function VouchersContent({ operadorAutenticado }) {
   const cerrarModal = () => {
     setVoucherSeleccionado(null);
     setMostrarModal(false);
+    setModoEdicion(false);
+    setVoucherEditado({});
+  };
+
+  // Abrir modo de edición
+  const abrirEdicion = () => {
+    setModoEdicion(true);
+    setVoucherEditado({ ...voucherSeleccionado });
+  };
+
+  // Cancelar edición
+  const cancelarEdicion = () => {
+    setModoEdicion(false);
+    setVoucherEditado({});
+  };
+
+  // Guardar edición
+  const guardarEdicion = async () => {
+    try {
+      const voucherRef = doc(db, 'voucherCorporativos', voucherSeleccionado.id);
+      await updateDoc(voucherRef, {
+        nombreCliente: voucherEditado.nombreCliente,
+        empresa: voucherEditado.empresa,
+        destino: voucherEditado.destino,
+        direccion: voucherEditado.direccion,
+        valor: voucherEditado.valor,
+        motivo: voucherEditado.motivo,
+        fechaHoraInicio: voucherEditado.fechaHoraInicio,
+        fechaHoraFinal: voucherEditado.fechaHoraFinal,
+        fechaActualizacion: new Date()
+      });
+
+      // Actualizar el voucher seleccionado
+      setVoucherSeleccionado({ ...voucherSeleccionado, ...voucherEditado });
+      setModoEdicion(false);
+      setVoucherEditado({});
+      
+      // Recargar la lista de vouchers
+      cargarVouchers();
+      
+      alert('Voucher actualizado exitosamente');
+    } catch (error) {
+      console.error('Error al actualizar voucher:', error);
+      alert('Error al actualizar el voucher');
+    }
   };
 
 
@@ -10885,27 +10945,63 @@ function VouchersContent({ operadorAutenticado }) {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
               <h3 style={{ margin: 0, color: '#1f2937' }}>Detalles del Voucher</h3>
-              <button
-                onClick={cerrarModal}
-                style={{
-                  background: 'none',
-                  border: 'none',
-                  fontSize: '24px',
-                  cursor: 'pointer',
-                  color: '#6b7280'
-                }}
-              >
-                ×
-              </button>
+              <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+                {!modoEdicion && (
+                  <button
+                    onClick={abrirEdicion}
+                    style={{
+                      background: '#3b82f6',
+                      color: 'white',
+                      border: 'none',
+                      padding: '8px 16px',
+                      borderRadius: '6px',
+                      cursor: 'pointer',
+                      fontSize: '14px',
+                      fontWeight: '500'
+                    }}
+                  >
+                    ✏️ Editar
+                  </button>
+                )}
+                <button
+                  onClick={cerrarModal}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    fontSize: '24px',
+                    cursor: 'pointer',
+                    color: '#6b7280'
+                  }}
+                >
+                  ×
+                </button>
+              </div>
             </div>
             
             <div style={{ display: 'grid', gap: '15px' }}>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <div>
                   <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Cliente</label>
-                  <div style={{ fontSize: '16px', fontWeight: '500', color: '#1f2937' }}>
-                    {voucherSeleccionado.nombreCliente}
-                  </div>
+                  {modoEdicion ? (
+                    <input
+                      type="text"
+                      value={voucherEditado.nombreCliente || ''}
+                      onChange={(e) => setVoucherEditado({...voucherEditado, nombreCliente: e.target.value})}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '16px',
+                        fontWeight: '500',
+                        color: '#1f2937'
+                      }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: '16px', fontWeight: '500', color: '#1f2937' }}>
+                      {voucherSeleccionado.nombreCliente}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Teléfono</label>
@@ -10918,9 +11014,25 @@ function VouchersContent({ operadorAutenticado }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <div>
                   <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Empresa</label>
-                  <div style={{ fontSize: '16px', color: '#374151' }}>
-                    {voucherSeleccionado.empresa}
-                  </div>
+                  {modoEdicion ? (
+                    <input
+                      type="text"
+                      value={voucherEditado.empresa || ''}
+                      onChange={(e) => setVoucherEditado({...voucherEditado, empresa: e.target.value})}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '16px',
+                        color: '#374151'
+                      }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: '16px', color: '#374151' }}>
+                      {voucherSeleccionado.empresa}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Número Autorización</label>
@@ -10932,16 +11044,48 @@ function VouchersContent({ operadorAutenticado }) {
               
               <div>
                 <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Destino</label>
-                <div style={{ fontSize: '16px', color: '#374151' }}>
-                  {voucherSeleccionado.destino}
-                </div>
+                {modoEdicion ? (
+                  <input
+                    type="text"
+                    value={voucherEditado.destino || ''}
+                    onChange={(e) => setVoucherEditado({...voucherEditado, destino: e.target.value})}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '16px',
+                      color: '#374151'
+                    }}
+                  />
+                ) : (
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {voucherSeleccionado.destino}
+                  </div>
+                )}
               </div>
               
               <div>
                 <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Dirección</label>
-                <div style={{ fontSize: '16px', color: '#374151' }}>
-                  {voucherSeleccionado.direccion}
-                </div>
+                {modoEdicion ? (
+                  <input
+                    type="text"
+                    value={voucherEditado.direccion || ''}
+                    onChange={(e) => setVoucherEditado({...voucherEditado, direccion: e.target.value})}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '16px',
+                      color: '#374151'
+                    }}
+                  />
+                ) : (
+                  <div style={{ fontSize: '16px', color: '#374151' }}>
+                    {voucherSeleccionado.direccion}
+                  </div>
+                )}
               </div>
               
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
@@ -10971,9 +11115,27 @@ function VouchersContent({ operadorAutenticado }) {
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
                 <div>
                   <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Valor</label>
-                  <div style={{ fontSize: '18px', fontWeight: '600', color: '#059669' }}>
-                    {'$'}{voucherSeleccionado.valor}
-                  </div>
+                  {modoEdicion ? (
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={voucherEditado.valor || ''}
+                      onChange={(e) => setVoucherEditado({...voucherEditado, valor: e.target.value})}
+                      style={{
+                        width: '100%',
+                        padding: '8px 12px',
+                        border: '1px solid #d1d5db',
+                        borderRadius: '6px',
+                        fontSize: '18px',
+                        fontWeight: '600',
+                        color: '#059669'
+                      }}
+                    />
+                  ) : (
+                    <div style={{ fontSize: '18px', fontWeight: '600', color: '#059669' }}>
+                      {'$'}{voucherSeleccionado.valor}
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Fecha</label>
@@ -10992,15 +11154,112 @@ function VouchersContent({ operadorAutenticado }) {
                 </div>
               )}
               
-              {voucherSeleccionado.motivo && (
-                <div>
-                  <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Motivo</label>
+              <div>
+                <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Motivo</label>
+                {modoEdicion ? (
+                  <input
+                    type="text"
+                    value={voucherEditado.motivo || ''}
+                    onChange={(e) => setVoucherEditado({...voucherEditado, motivo: e.target.value})}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      border: '1px solid #d1d5db',
+                      borderRadius: '6px',
+                      fontSize: '16px',
+                      color: '#374151'
+                    }}
+                  />
+                ) : (
                   <div style={{ fontSize: '16px', color: '#374151' }}>
-                    {voucherSeleccionado.motivo}
+                    {voucherSeleccionado.motivo || 'Sin motivo'}
                   </div>
-                </div>
+                )}
+              </div>
+
+              {/* Campos adicionales para edición */}
+              {modoEdicion && (
+                <>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Fecha/Hora Inicio</label>
+                      <input
+                        type="datetime-local"
+                        value={voucherEditado.fechaHoraInicio || ''}
+                        onChange={(e) => setVoucherEditado({...voucherEditado, fechaHoraInicio: e.target.value})}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          fontSize: '16px',
+                          color: '#374151'
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <label style={{ fontSize: '12px', color: '#6b7280', textTransform: 'uppercase' }}>Fecha/Hora Final</label>
+                      <input
+                        type="datetime-local"
+                        value={voucherEditado.fechaHoraFinal || ''}
+                        onChange={(e) => setVoucherEditado({...voucherEditado, fechaHoraFinal: e.target.value})}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          fontSize: '16px',
+                          color: '#374151'
+                        }}
+                      />
+                    </div>
+                  </div>
+                </>
               )}
             </div>
+            
+            {/* Botones de acción cuando está en modo edición */}
+            {modoEdicion && (
+              <div style={{ 
+                display: 'flex', 
+                gap: '12px', 
+                justifyContent: 'flex-end', 
+                marginTop: '20px',
+                paddingTop: '20px',
+                borderTop: '1px solid #e5e7eb'
+              }}>
+                <button
+                  onClick={cancelarEdicion}
+                  style={{
+                    padding: '10px 20px',
+                    border: '2px solid #6b7280',
+                    borderRadius: '8px',
+                    backgroundColor: 'transparent',
+                    color: '#6b7280',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={guardarEdicion}
+                  style={{
+                    padding: '10px 20px',
+                    border: 'none',
+                    borderRadius: '8px',
+                    backgroundColor: '#10b981',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontSize: '14px',
+                    fontWeight: '500'
+                  }}
+                >
+                  Guardar Cambios
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
