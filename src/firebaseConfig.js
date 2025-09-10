@@ -4,14 +4,16 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyAOfE_8hTnyXva2C223DiuPoe75RW9a4Wo",
-  authDomain: "ecudriver-go.firebaseapp.com",
-  projectId: "ecudriver-go",
-  storageBucket: "ecudriver-go.firebasestorage.app",
-  messagingSenderId: "215261563277",
-  appId: "1:215261563277:web:ab73f014893a98413195c4",
-  measurementId: "G-6LZ0VSQTKL"
+  apiKey: "AIzaSyCNbzp8lDOdJpUWFBpjC-2bHYLemBj8cos",
+  authDomain: "appecdriver.firebaseapp.com",
+  databaseURL: "https://appecdriver-default-rtdb.firebaseio.com",
+  projectId: "appecdriver",
+  storageBucket: "appecdriver.appspot.com",
+  messagingSenderId: "967992971623",
+  appId: "1:967992971623:web:51dc3ba017676acdb0dfc2",
+  measurementId: "G-PYJ7J08014"
 };
+
 
 const app = initializeApp(firebaseConfig);
 export const auth = getAuth(app);

@@ -6,8 +6,11 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
     { id: 'conductores', label: 'Conductores', icon: '👨‍💼' },
     { id: 'reportes', label: 'Reportes', icon: '📈' },
     { id: 'operadores', label: 'Operadores', icon: '👥' },
-  { id: 'reservas', label: 'Reservas', icon: '📅' },
-  { id: 'vouchers', label: 'Vouchers', icon: '🧾' }
+    { id: 'reservas', label: 'Reservas', icon: '📅' },
+    { id: 'vouchers', label: 'Vouchers', icon: '🧾' },
+    { id: 'whatsapp1', label: 'Whatsapp1', icon: '💬' },
+    { id: 'whatsapptops', label: 'WhatsappTops', icon: '💬' },
+    { id: 'whatsappunidades', label: 'WhatsappUnidades', icon: '💬' }
   ];
 
   return (
@@ -59,7 +62,18 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
         {menuItems.map((item) => (
           <div
             key={item.id}
-            onClick={() => setActiveSection(item.id)}
+            onClick={() => {
+              // Si es una opción de WhatsApp, abrir en nueva ventana con URL específica
+              if (item.id === 'whatsapp1') {
+                window.open('http://37.60.227.239:3005/', '_blank');
+              } else if (item.id === 'whatsapptops') {
+                window.open('http://37.60.227.239:3006/', '_blank');
+              } else if (item.id === 'whatsappunidades') {
+                window.open('http://37.60.227.239:3022/', '_blank');
+              } else {
+                setActiveSection(item.id);
+              }
+            }}
             style={{
               padding: '15px 20px',
               cursor: 'pointer',

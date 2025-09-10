@@ -567,7 +567,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   const [nombre, setNombre] = useState('');
   const [coordenadas, setCoordenadas] = useState('');
   const [direccion, setDireccion] = useState('');
+  const [sector, setSector] = useState('');
   const [base, setBase] = useState('0');
+  const [busquedaPorIdCliente, setBusquedaPorIdCliente] = useState(false);
+  const [telefonoCompletoCliente, setTelefonoCompletoCliente] = useState('');
   const [tiempo, setTiempo] = useState('');
   const [unidad, setUnidad] = useState('');
   // Inicializar modoSeleccion (fijo en manual, no cambia la interfaz)
@@ -600,6 +603,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   });
        const [viajesAsignados, setViajesAsignados] = useState([]);
    const [cargandoViajes, setCargandoViajes] = useState(false);
+   const [pedidosDisponibles, setpedidosDisponibles1] = useState([]);
      const [editandoViaje, setEditandoViaje] = useState(null);
   const [tiempoEdit, setTiempoEdit] = useState('');
   const [unidadEdit, setUnidadEdit] = useState('');
@@ -624,6 +628,21 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     pedido: null,
     coleccion: '' // 'pedidosDisponibles1' o 'pedidoEnCurso'
   });
+
+  // Estados para modal de edición de datos del cliente
+  const [modalEditarCliente, setModalEditarCliente] = useState({
+    open: false,
+    pedido: null,
+    nombreCliente: '',
+    direccion: ''
+  });
+
+  // Estados para selector de direcciones del cliente
+  const [direccionesCliente, setDireccionesCliente] = useState([]);
+  const [mostrarSelectorDirecciones, setMostrarSelectorDirecciones] = useState(false);
+
+  // Estado para manejar direcciones seleccionadas en pedidos disponibles
+  const [direccionesSeleccionadasPedidos, setDireccionesSeleccionadasPedidos] = useState({});
 
   // Estado para mensaje del conductor
   const [mensajeConductor, setMensajeConductor] = useState('');
@@ -976,7 +995,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         console.log('📄 Documento encontrado:', doc.id, data);
         return {
           id: doc.id,
-          ...data
+          ...data,
+          coleccion: 'pedidosDisponibles1'
         };
       });
       
@@ -991,12 +1011,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       });
       
       console.log('✅ Pedidos procesados para mostrar:', pedidos.length);
-      setViajesAsignados(pedidos);
+      setpedidosDisponibles1(pedidos);
       setCargandoViajes(false);
     }, (error) => {
       console.error('❌ Error en listener de pedidosDisponibles1:', error);
       setCargandoViajes(false);
     });
+
 
     // Listener para pedidoEnCurso
     const qEnCurso = query(
@@ -1035,6 +1056,31 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       }
     };
   }, []);
+
+  // useEffect para establecer los pedidos disponibles directamente
+  useEffect(() => {
+    console.log('🔄 Estableciendo pedidos disponibles:', pedidosDisponibles.length);
+    setViajesAsignados(pedidosDisponibles);
+  }, [pedidosDisponibles]);
+
+  // useEffect para cargar direcciones cuando se actualicen los viajes asignados
+  useEffect(() => {
+    if (viajesAsignados && viajesAsignados.length > 0) {
+      console.log('🔄 Cargando direcciones para', viajesAsignados.length, 'pedidos');
+      console.log('📊 Estado actual de direcciones:', direccionesSeleccionadasPedidos);
+      viajesAsignados.forEach(viaje => {
+        console.log('📱 Procesando pedido:', viaje.id, 'teléfono:', viaje.telefono);
+        if (viaje.telefono && !direccionesSeleccionadasPedidos[viaje.id]) {
+          console.log('🚀 Iniciando carga de direcciones para pedido:', viaje.id);
+          cargarDireccionesClienteParaPedido(viaje.telefono, viaje.id);
+        } else if (direccionesSeleccionadasPedidos[viaje.id]) {
+          console.log('✅ Direcciones ya cargadas para pedido:', viaje.id, direccionesSeleccionadasPedidos[viaje.id]);
+        } else {
+          console.log('⚠️ No hay teléfono para pedido:', viaje.id);
+        }
+      });
+    }
+  }, [viajesAsignados]);
 
   const cargarViajesAsignados = async () => {
     console.log('🔄 Iniciando carga manual de pedidos disponibles...');
@@ -1160,168 +1206,222 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     }
   };
 
-  // Nueva función para buscar en ambas colecciones de clientes
+  // Función optimizada para buscar en clientes
   const buscarCliente = async (numeroTelefono) => {
     try {
-      let coleccionNombre = '';
-      let tipoCliente = '';
-      
       console.log('🔍 Iniciando búsqueda de cliente con teléfono:', numeroTelefono);
       
-      // Determinar el tipo de cliente según la longitud del teléfono
+      // Normalizar el número de teléfono
       let telefonoBusqueda = numeroTelefono;
       
-      if (numeroTelefono.length === 7) {
-        coleccionNombre = 'clientes';
-        tipoCliente = 'cliente';
-        telefonoBusqueda = numeroTelefono;
-        console.log('📱 Buscando en colección "clientes" (7 dígitos)');
-        
-        // Buscar directamente por ID (teléfono)
-        console.log('🔎 Buscando cliente por ID (teléfono):', telefonoBusqueda);
-        const clienteDoc = doc(db, coleccionNombre, telefonoBusqueda);
-        const clienteSnapshot = await getDoc(clienteDoc);
-        
-        if (clienteSnapshot.exists()) {
-          const clienteData = clienteSnapshot.data();
-          console.log('📄 Documento del cliente encontrado:', clienteData);
-          
-          // Cargar la primera dirección del array (si existe)
-          if (clienteData.direcciones && clienteData.direcciones.length > 0) {
-            // Buscar la dirección activa más reciente
-            const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
-            clienteData.direccion = direccionActiva.direccion;
-            clienteData.coordenadas = direccionActiva.coordenadas;
-            console.log('📍 Dirección encontrada en array:', direccionActiva);
-            console.log('📍 Total de direcciones del cliente:', clienteData.direcciones.length);
-          } else {
-            console.log('⚠️ No se encontraron direcciones para el cliente');
-            clienteData.direccion = '';
-            clienteData.coordenadas = '';
-          }
-          
-          console.log(`✅ ${tipoCliente} encontrado con datos completos:`, clienteData);
-          return { 
-            encontrado: true, 
-            datos: clienteData, 
-            tipoCliente: tipoCliente,
-            coleccion: coleccionNombre
-          };
-        } else {
-          console.log(`❌ No se encontró ${tipoCliente} con teléfono ${numeroTelefono} en ${coleccionNombre}`);
-          return { 
-            encontrado: false, 
-            tipoCliente: tipoCliente,
-            coleccion: coleccionNombre
-          };
-        }
-      } else if (numeroTelefono.length >= 9 && numeroTelefono.length <= 10) {
-        coleccionNombre = 'clientestelefonos';
-        tipoCliente = 'cliente telefono';
-        
-        // Para celulares, intentar primero con telefonoCompleto (Ecuador por defecto)
-        const telefonoCompleto = concatenarTelefonoWhatsApp(numeroTelefono, 'Ecuador');
-        console.log('📱 Intentando buscar con telefonoCompleto:', telefonoCompleto);
-        
-        // Intentar primero con telefonoCompleto
-        let clienteDoc = doc(db, coleccionNombre, telefonoCompleto);
-        let clienteSnapshot = await getDoc(clienteDoc);
-        
-        if (clienteSnapshot.exists()) {
-          telefonoBusqueda = telefonoCompleto;
-          console.log('✅ Cliente encontrado con telefonoCompleto como ID');
-        } else {
-          // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
-        telefonoBusqueda = numeroTelefono.slice(-9);
-          console.log('📱 Intentando con últimos 9 dígitos como fallback:', telefonoBusqueda);
-          clienteDoc = doc(db, coleccionNombre, telefonoBusqueda);
-          clienteSnapshot = await getDoc(clienteDoc);
-        }
-        
-        if (clienteSnapshot.exists()) {
-          const clienteData = clienteSnapshot.data();
-          console.log('📄 Documento del cliente encontrado:', clienteData);
-          
-          // Cargar la primera dirección del array (si existe)
-          if (clienteData.direcciones && clienteData.direcciones.length > 0) {
-            // Buscar la dirección activa más reciente
-            const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
-            clienteData.direccion = direccionActiva.direccion;
-            clienteData.coordenadas = direccionActiva.coordenadas;
-            console.log('📍 Dirección encontrada en array:', direccionActiva);
-            console.log('📍 Total de direcciones del cliente:', clienteData.direcciones.length);
-          } else {
-            console.log('⚠️ No se encontraron direcciones para el cliente');
-            clienteData.direccion = '';
-            clienteData.coordenadas = '';
-          }
-          
-          console.log(`✅ ${tipoCliente} encontrado con datos completos:`, clienteData);
-          return { 
-            encontrado: true, 
-            datos: clienteData, 
-            tipoCliente: tipoCliente,
-            coleccion: coleccionNombre
-          };
-        } else {
-          console.log(`❌ No se encontró ${tipoCliente} con teléfono ${numeroTelefono} en ${coleccionNombre}`);
-          return { 
-            encontrado: false, 
-            tipoCliente: tipoCliente,
-            coleccion: coleccionNombre
-          };
-        }
-      } else if (numeroTelefono.length > 10) {
-        coleccionNombre = 'clientes fijos';
-        tipoCliente = 'cliente fijo';
-        telefonoBusqueda = numeroTelefono;
-        console.log('📱 Buscando en colección "clientes fijos" (>10 dígitos)');
-
-      // Buscar directamente por ID (teléfono)
-      console.log('🔎 Buscando cliente por ID (teléfono):', telefonoBusqueda);
-      const clienteDoc = doc(db, coleccionNombre, telefonoBusqueda);
-      const clienteSnapshot = await getDoc(clienteDoc);
+      // Si el número empieza con 0, reemplazar con 593
+      if (telefonoBusqueda.startsWith('0')) {
+        telefonoBusqueda = '593' + telefonoBusqueda.substring(1);
+        console.log('🔄 Número normalizado con prefijo 593:', telefonoBusqueda);
+      }
       
-      if (clienteSnapshot.exists()) {
-        const clienteData = clienteSnapshot.data();
-        console.log('📄 Documento del cliente encontrado:', clienteData);
+      // Buscar directamente por teléfono usando where clause
+      const qTelefono = query(
+        collection(db, 'clientes'),
+        where('telefono', '==', telefonoBusqueda)
+      );
+      const snapshotTelefono = await getDocs(qTelefono);
+      
+      if (!snapshotTelefono.empty) {
+        const clienteDoc = snapshotTelefono.docs[0];
+        const clienteData = clienteDoc.data();
+        console.log('✅ Cliente encontrado por teléfono:', clienteData);
         
         // Cargar la primera dirección del array (si existe)
         if (clienteData.direcciones && clienteData.direcciones.length > 0) {
-          // Buscar la dirección activa más reciente
           const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
           clienteData.direccion = direccionActiva.direccion;
           clienteData.coordenadas = direccionActiva.coordenadas;
-          console.log('📍 Dirección encontrada en array:', direccionActiva);
-          console.log('📍 Total de direcciones del cliente:', clienteData.direcciones.length);
-        } else {
-          console.log('⚠️ No se encontraron direcciones para el cliente');
-          clienteData.direccion = '';
-          clienteData.coordenadas = '';
+          clienteData.sector = direccionActiva.sector;
+          console.log('📍 Dirección encontrada:', direccionActiva);
         }
         
-        console.log(`✅ ${tipoCliente} encontrado con datos completos:`, clienteData);
-        return { 
-          encontrado: true, 
-          datos: clienteData, 
-          tipoCliente: tipoCliente,
-          coleccion: coleccionNombre
-        };
-      } else {
-        console.log(`❌ No se encontró ${tipoCliente} con teléfono ${numeroTelefono} en ${coleccionNombre}`);
-        return { 
-          encontrado: false, 
-          tipoCliente: tipoCliente,
-          coleccion: coleccionNombre
-        };
-        }
-      } else {
-        console.log('❌ Teléfono no cumple criterios:', numeroTelefono.length, 'dígitos');
-        return { encontrado: false, tipoCliente: null };
+        return { encontrado: true, datos: clienteData, tipoCliente: 'cliente' };
       }
+      
+      // Si no se encuentra por teléfono, buscar por ID del documento
+      const docRef = doc(db, 'clientes', telefonoBusqueda);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const clienteData = docSnap.data();
+        console.log('✅ Cliente encontrado por ID:', clienteData);
+        
+        // Cargar la primera dirección del array (si existe)
+        if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+          const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+          clienteData.direccion = direccionActiva.direccion;
+          clienteData.coordenadas = direccionActiva.coordenadas;
+          clienteData.sector = direccionActiva.sector;
+          console.log('📍 Dirección encontrada:', direccionActiva);
+        }
+        
+        return { encontrado: true, datos: clienteData, tipoCliente: 'cliente' };
+      }
+      
+      // Si el número tiene 5 dígitos, buscar por id_cliente
+      if (numeroTelefono.length === 5) {
+        console.log('🔍 Buscando por id_cliente:', numeroTelefono);
+        const qIdCliente = query(
+          collection(db, 'clientes'),
+          where('id_cliente', '==', parseInt(numeroTelefono))
+        );
+        const snapshotIdCliente = await getDocs(qIdCliente);
+        
+        if (!snapshotIdCliente.empty) {
+          const clienteDoc = snapshotIdCliente.docs[0];
+          const clienteData = clienteDoc.data();
+          console.log('✅ Cliente encontrado por id_cliente:', clienteData);
+          
+          // Cargar la primera dirección del array (si existe)
+          if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+            const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+            clienteData.direccion = direccionActiva.direccion;
+            clienteData.coordenadas = direccionActiva.coordenadas;
+            clienteData.sector = direccionActiva.sector;
+            console.log('📍 Dirección encontrada:', direccionActiva);
+          }
+          
+          return { encontrado: true, datos: clienteData, tipoCliente: 'cliente', busquedaPorId: true };
+        }
+      }
+      
+      console.log('❌ No se encontró cliente con teléfono:', telefonoBusqueda);
+      return { encontrado: false, tipoCliente: 'cliente' };
     } catch (error) {
-      console.error('💥 Error al buscar cliente:', error);
-      return { encontrado: false, tipoCliente: null };
+      console.error('Error en búsqueda de cliente:', error);
+      return { encontrado: false, tipoCliente: 'cliente' };
+    }
+  };
+
+  // Función específica para buscar en clientes con 7 dígitos usando ID del documento
+  const buscarCliente7Digitos = async (numeroTelefono) => {
+    try {
+      console.log('🔍 Buscando en clientes con 7 dígitos (ID del documento):', numeroTelefono);
+      
+      // Buscar directamente por ID del documento en la colección clientes
+      const docRef = doc(db, 'clientes', numeroTelefono);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const clienteData = docSnap.data();
+        console.log('✅ Cliente encontrado por ID en clientes:', clienteData);
+        
+        // Cargar la primera dirección del array (si existe)
+        if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+          const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+          clienteData.direccion = direccionActiva.direccion;
+          clienteData.coordenadas = direccionActiva.coordenadas;
+          clienteData.sector = direccionActiva.sector;
+          console.log('📍 Dirección encontrada:', direccionActiva);
+        }
+        
+        return { encontrado: true, datos: clienteData, tipoCliente: 'cliente 7 digitos' };
+      }
+      
+      console.log('❌ No se encontró cliente en clientes con ID:', numeroTelefono);
+      return { encontrado: false, tipoCliente: 'cliente 7 digitos' };
+    } catch (error) {
+      console.error('Error en búsqueda de clientes 7 dígitos:', error);
+      return { encontrado: false, tipoCliente: 'cliente 7 digitos' };
+    }
+  };
+
+  // Función optimizada para buscar en clientestelefonos1
+  const buscarClienteTelefonos = async (numeroTelefono) => {
+    try {
+      console.log('🔍 Buscando en clientestelefonos1 con teléfono:', numeroTelefono);
+      
+      // Normalizar el número de teléfono
+      let telefonoBusqueda = numeroTelefono;
+      
+      // Si el número empieza con 0, reemplazar con 593
+      if (telefonoBusqueda.startsWith('0')) {
+        telefonoBusqueda = '593' + telefonoBusqueda.substring(1);
+        console.log('🔄 Número normalizado con prefijo 593:', telefonoBusqueda);
+      }
+      
+      // Buscar directamente por teléfono usando where clause
+      const qTelefono = query(
+        collection(db, 'clientestelefonos1'),
+        where('telefono', '==', telefonoBusqueda)
+      );
+      const snapshotTelefono = await getDocs(qTelefono);
+      
+      if (!snapshotTelefono.empty) {
+        const clienteDoc = snapshotTelefono.docs[0];
+        const clienteData = clienteDoc.data();
+        console.log('✅ Cliente encontrado por teléfono:', clienteData);
+        
+        // Cargar la primera dirección del array (si existe)
+        if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+          const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+          clienteData.direccion = direccionActiva.direccion;
+          clienteData.coordenadas = direccionActiva.coordenadas;
+          clienteData.sector = direccionActiva.sector;
+          console.log('📍 Dirección encontrada:', direccionActiva);
+        }
+        
+        return { encontrado: true, datos: clienteData, tipoCliente: 'cliente telefono' };
+      }
+      
+      // Si no se encuentra por teléfono, buscar por ID del documento
+      const docRef = doc(db, 'clientestelefonos1', telefonoBusqueda);
+      const docSnap = await getDoc(docRef);
+      
+      if (docSnap.exists()) {
+        const clienteData = docSnap.data();
+        console.log('✅ Cliente encontrado por ID:', clienteData);
+        
+        // Cargar la primera dirección del array (si existe)
+        if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+          const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+          clienteData.direccion = direccionActiva.direccion;
+          clienteData.coordenadas = direccionActiva.coordenadas;
+          clienteData.sector = direccionActiva.sector;
+          console.log('📍 Dirección encontrada:', direccionActiva);
+        }
+        
+        return { encontrado: true, datos: clienteData, tipoCliente: 'cliente telefono' };
+      }
+      
+      // Si el número tiene 5 dígitos, buscar por id_cliente
+      if (numeroTelefono.length === 5) {
+        console.log('🔍 Buscando por id_cliente:', numeroTelefono);
+        const qIdCliente = query(
+          collection(db, 'clientestelefonos1'),
+          where('id_cliente', '==', parseInt(numeroTelefono))
+        );
+        const snapshotIdCliente = await getDocs(qIdCliente);
+        
+        if (!snapshotIdCliente.empty) {
+          const clienteDoc = snapshotIdCliente.docs[0];
+          const clienteData = clienteDoc.data();
+          console.log('✅ Cliente encontrado por id_cliente:', clienteData);
+          
+          // Cargar la primera dirección del array (si existe)
+          if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+            const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+            clienteData.direccion = direccionActiva.direccion;
+            clienteData.coordenadas = direccionActiva.coordenadas;
+            clienteData.sector = direccionActiva.sector;
+            console.log('📍 Dirección encontrada:', direccionActiva);
+          }
+          
+          return { encontrado: true, datos: clienteData, tipoCliente: 'cliente telefono', busquedaPorId: true };
+        }
+      }
+      
+      console.log('❌ No se encontró cliente en clientestelefonos1 con teléfono:', telefonoBusqueda);
+      return { encontrado: false, tipoCliente: 'cliente telefono' };
+    } catch (error) {
+      console.error('Error en búsqueda de clientestelefonos1:', error);
+      return { encontrado: false, tipoCliente: 'cliente telefono' };
     }
   };
 
@@ -1335,11 +1435,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     if (/^\d*$/.test(value)) {
       setTelefono(value);
       // Limpiar datos cuando el teléfono cambie
-      if (value.length < 7) {
+      if (value.length < 5) {
         setUsuarioEncontrado(null);
         setNombre('');
         setDireccion('');
         setCoordenadas('');
+        setSector('');
+        setBusquedaPorIdCliente(false);
+        setTelefonoCompletoCliente('');
         setMostrarModal(false);
       }
     }
@@ -1349,44 +1452,47 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     if (e.key === 'Enter') {
       e.preventDefault();
       
-      // Solo buscar si el teléfono tiene 7 dígitos, 9-10 dígitos, o más de 10
-      if (telefono && (telefono.length === 7 || (telefono.length >= 9 && telefono.length <= 10) || telefono.length > 10)) {
+      // Solo buscar si el teléfono tiene al menos 5 dígitos (para id_cliente) o 7+ dígitos (para teléfono)
+      if (telefono && (telefono.length === 5 || telefono.length >= 7)) {
         console.log('🔍 Buscando cliente con teléfono:', telefono);
+        setBuscandoUsuario(true);
         
-        // Debug: Verificar estructura de datos directamente
-        if (telefono === '2511511') {
-          console.log('🔍 DEBUG: Verificando estructura para HOTEL VIENA...');
-          try {
-            const q = query(collection(db, 'clientes'), where("telefono", "==", "2511511"));
-            const snapshot = await getDocs(q);
-            console.log('📊 Documentos encontrados:', snapshot.size);
-            
-            if (!snapshot.empty) {
-              const doc = snapshot.docs[0];
-              console.log('📄 Documento principal:', doc.data());
-              console.log('🆔 ID del documento:', doc.id);
-              
-              // Verificar subcolección direcciones
-              const direccionesRef = collection(db, 'clientes', doc.id, 'direcciones');
-              const direccionesSnapshot = await getDocs(direccionesRef);
-              console.log('📍 Direcciones en subcolección:', direccionesSnapshot.size);
-              
-              direccionesSnapshot.forEach((doc, index) => {
-                console.log(`📍 Dirección ${index + 1}:`, doc.data());
-              });
-            }
-          } catch (error) {
-            console.error('💥 Error en debug:', error);
+        let resultadoBusqueda = null;
+        
+        // Si tiene exactamente 7 dígitos, buscar solo en clientes
+        if (telefono.length === 7) {
+          console.log('🔍 Búsqueda específica para 7 dígitos en clientes');
+          resultadoBusqueda = await buscarCliente7Digitos(telefono);
+        } else {
+          // Para otros casos (5 dígitos o 8+ dígitos), usar la lógica normal
+          // Buscar primero en clientestelefonos1 con la nueva lógica optimizada
+          resultadoBusqueda = await buscarClienteTelefonos(telefono);
+          
+          // Si no se encuentra en clientestelefonos1, buscar en clientes
+          if (!resultadoBusqueda || !resultadoBusqueda.encontrado) {
+            console.log('🔄 No encontrado en clientestelefonos1, buscando en clientes');
+            resultadoBusqueda = await buscarCliente(telefono);
           }
         }
         
-        const resultadoBusqueda = await buscarCliente(telefono);
         console.log('📋 Resultado de búsqueda:', resultadoBusqueda);
         
         if (resultadoBusqueda && resultadoBusqueda.encontrado) {
           // Cliente encontrado, cargar datos automáticamente
           const clienteData = resultadoBusqueda.datos;
           console.log('📋 Datos completos del cliente encontrado:', clienteData);
+          
+          // Marcar si se encontró por ID de cliente o por 7 dígitos
+          if (resultadoBusqueda.busquedaPorId || resultadoBusqueda.tipoCliente === 'cliente 7 digitos') {
+            setBusquedaPorIdCliente(true);
+            const telefonoCompletoDelCliente = clienteData.telefonoCompleto || clienteData.telefono;
+            setTelefonoCompletoCliente(telefonoCompletoDelCliente);
+            console.log('🆔 Cliente encontrado por ID o 7 dígitos, manteniendo código original:', telefono);
+            console.log('📱 Teléfono completo del cliente:', telefonoCompletoDelCliente);
+          } else {
+            setBusquedaPorIdCliente(false);
+            setTelefonoCompletoCliente('');
+          }
           
           if (clienteData.nombre) {
             setNombre(clienteData.nombre);
@@ -1407,6 +1513,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             console.log('⚠️ No se encontraron coordenadas para el cliente');
           }
           
+          if (clienteData.sector) {
+            setSector(clienteData.sector);
+            console.log('✅ Sector cargado:', clienteData.sector);
+          } else {
+            console.log('⚠️ No se encontró sector para el cliente');
+          }
+          
           console.log(`✅ Datos del ${resultadoBusqueda.tipoCliente} cargados automáticamente:`, clienteData);
           
           // Cargar direcciones guardadas directamente
@@ -1418,6 +1531,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               setDireccionSeleccionada(primeraDireccion);
               setDireccion(primeraDireccion.direccion);
               setCoordenadas(primeraDireccion.coordenadas || '');
+              setSector(primeraDireccion.sector || '');
               console.log('📍 Primera dirección seleccionada automáticamente:', primeraDireccion);
             }
             console.log('📍 Direcciones guardadas cargadas:', clienteData.direcciones.length);
@@ -1426,6 +1540,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             setDireccionSeleccionada(null);
             console.log('⚠️ No hay direcciones guardadas para este cliente');
           }
+
+          // Cargar direcciones del cliente para el selector
+          await cargarDireccionesCliente(telefono);
           
           // Enfocar el input de base después de encontrar el cliente
           setTimeout(() => {
@@ -1461,10 +1578,237 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       } else {
         console.log('📱 Teléfono no cumple criterios para búsqueda:', telefono);
       }
+      
+      // Finalizar búsqueda
+      setBuscandoUsuario(false);
     }
   };
-  // Función para seleccionar una dirección del listado
+
+  // Función para cargar direcciones del cliente cuando se encuentra
+  const cargarDireccionesCliente = async (telefono) => {
+    try {
+      console.log('🔍 Buscando cliente por últimos 7 dígitos del teléfono:', telefono);
+      
+      // Obtener los últimos 7 dígitos del teléfono
+      const ultimos7Digitos = telefono.slice(-7);
+      console.log('🔢 Últimos 7 dígitos:', ultimos7Digitos);
+      
+      // Buscar todos los clientes y filtrar por los últimos 7 dígitos
+      const qClientes = query(collection(db, 'clientes'));
+      const snapshot = await getDocs(qClientes);
+      
+      let clienteEncontrado = false;
+      
+      snapshot.docs.forEach(clienteDoc => {
+        if (clienteEncontrado) return; // Si ya encontró uno, salir
+        
+        const clienteData = clienteDoc.data();
+        const telefonoCliente = clienteData.telefono || '';
+        const ultimos7Cliente = telefonoCliente.slice(-7);
+        
+        console.log('📱 Comparando:', ultimos7Digitos, 'vs', ultimos7Cliente, 'del cliente:', telefonoCliente);
+        
+        if (ultimos7Cliente === ultimos7Digitos) {
+          console.log('✅ Cliente encontrado por últimos 7 dígitos:', clienteData);
+        
+          // Verificar si el cliente tiene direcciones en el array direccionesCliente
+          if (clienteData.direccionesCliente && clienteData.direccionesCliente.length > 0) {
+            setDireccionesCliente(clienteData.direccionesCliente);
+            setMostrarSelectorDirecciones(true);
+            console.log('📍 Direcciones del cliente cargadas:', clienteData.direccionesCliente);
+            clienteEncontrado = true;
+          } else if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+            // Fallback: verificar también el campo direcciones
+            setDireccionesCliente(clienteData.direcciones);
+            setMostrarSelectorDirecciones(true);
+            console.log('📍 Direcciones del cliente cargadas (fallback):', clienteData.direcciones);
+            clienteEncontrado = true;
+          }
+        }
+      });
+      
+      if (!clienteEncontrado) {
+        setDireccionesCliente([]);
+        setMostrarSelectorDirecciones(false);
+        console.log('⚠️ No se encontró cliente con los últimos 7 dígitos');
+      }
+    } catch (error) {
+      console.error('Error cargando direcciones del cliente:', error);
+      setDireccionesCliente([]);
+      setMostrarSelectorDirecciones(false);
+    }
+  };
+
+  // Función para cargar direcciones de un cliente específico para pedidos disponibles
+  const cargarDireccionesClienteParaPedido = async (telefono, pedidoId) => {
+    try {
+      console.log('🔍 Buscando direcciones para teléfono:', telefono, 'pedido:', pedidoId);
+      
+      // Obtener los últimos 7 dígitos del teléfono
+      const ultimos7Digitos = telefono.slice(-7);
+      console.log('🔢 Últimos 7 dígitos:', ultimos7Digitos);
+      
+      let clienteEncontrado = false;
+      
+      // Método 1: Buscar directamente por ID del documento (teléfono completo)
+      try {
+        console.log('🔍 Método 1: Buscando por ID del documento:', telefono);
+        const clienteDocRef = doc(db, 'clientes', telefono);
+        const clienteSnapshot = await getDoc(clienteDocRef);
+        
+        if (clienteSnapshot.exists()) {
+          const clienteData = clienteSnapshot.data();
+          console.log('✅ Cliente encontrado por ID del documento:', clienteData);
+          
+          if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+            setDireccionesSeleccionadasPedidos(prev => ({
+              ...prev,
+              [pedidoId]: {
+                direcciones: clienteData.direcciones,
+                seleccionada: clienteData.direcciones[0]
+              }
+            }));
+            console.log('📍 Direcciones cargadas (método 1):', clienteData.direcciones);
+            clienteEncontrado = true;
+          }
+        }
+      } catch (error) {
+        console.log('⚠️ Método 1 falló:', error.message);
+      }
+      
+      // Método 2: Si no se encontró, buscar por últimos 7 dígitos
+      if (!clienteEncontrado) {
+        console.log('🔍 Método 2: Buscando por últimos 7 dígitos');
+        const qClientes = query(collection(db, 'clientes'));
+        const snapshot = await getDocs(qClientes);
+        
+        snapshot.docs.forEach(clienteDoc => {
+          if (clienteEncontrado) return; // Si ya encontró uno, salir
+          
+          const clienteData = clienteDoc.data();
+          const telefonoCliente = clienteData.telefono || '';
+          const ultimos7Cliente = telefonoCliente.slice(-7);
+          const idDocumento = clienteDoc.id;
+          const ultimos7Id = idDocumento.slice(-7);
+          
+          console.log('📱 Comparando:', ultimos7Digitos, 'vs tel:', ultimos7Cliente, 'vs ID:', ultimos7Id);
+          
+          // Comparar con teléfono, ID del documento y últimos 7 dígitos
+          if (ultimos7Cliente === ultimos7Digitos || 
+              telefonoCliente === ultimos7Digitos || 
+              ultimos7Id === ultimos7Digitos ||
+              idDocumento === telefono) {
+            console.log('✅ Cliente encontrado por últimos 7 dígitos:', clienteData);
+          
+          // Verificar si el cliente tiene direcciones en el array direccionesCliente
+          if (clienteData.direccionesCliente && clienteData.direccionesCliente.length > 0) {
+            // Actualizar el estado de direcciones seleccionadas para este pedido
+            setDireccionesSeleccionadasPedidos(prev => ({
+              ...prev,
+              [pedidoId]: {
+                direcciones: clienteData.direccionesCliente,
+                seleccionada: clienteData.direccionesCliente[0] // Seleccionar la primera por defecto
+              }
+            }));
+            console.log('📍 Direcciones del cliente cargadas para pedido:', pedidoId, clienteData.direccionesCliente);
+            clienteEncontrado = true;
+          } else if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+            // Fallback: verificar también el campo direcciones
+            setDireccionesSeleccionadasPedidos(prev => ({
+              ...prev,
+              [pedidoId]: {
+                direcciones: clienteData.direcciones,
+                seleccionada: clienteData.direcciones[0]
+              }
+            }));
+            console.log('📍 Direcciones del cliente cargadas (fallback) para pedido:', pedidoId, clienteData.direcciones);
+            clienteEncontrado = true;
+          } else {
+            console.log('⚠️ Cliente encontrado pero sin direcciones guardadas, continuando búsqueda...');
+          }
+          }
+        });
+      }
+      
+      if (!clienteEncontrado) {
+        console.log('❌ No se encontró cliente con ningún formato de teléfono');
+        // Crear un array con la dirección actual del pedido como fallback
+        const direccionActual = {
+          direccion: 'Dirección actual',
+          coordenadas: '',
+          activa: true
+        };
+        
+        setDireccionesSeleccionadasPedidos(prev => ({
+          ...prev,
+          [pedidoId]: {
+            direcciones: [direccionActual],
+            seleccionada: direccionActual
+          }
+        }));
+      }
+    } catch (error) {
+      console.error('Error cargando direcciones del cliente para pedido:', error);
+      // Fallback: crear un array con la dirección actual del pedido
+      const direccionActual = {
+        direccion: 'Dirección actual',
+        coordenadas: '',
+        activa: true
+      };
+      
+      setDireccionesSeleccionadasPedidos(prev => ({
+        ...prev,
+        [pedidoId]: {
+          direcciones: [direccionActual],
+          seleccionada: direccionActual
+        }
+      }));
+    }
+  };
+
+  // Función para actualizar la dirección seleccionada de un pedido
+  const actualizarDireccionSeleccionada = async (pedidoId, nuevaDireccion) => {
+    try {
+      // Actualizar el estado local
+      setDireccionesSeleccionadasPedidos(prev => ({
+        ...prev,
+        [pedidoId]: {
+          ...prev[pedidoId],
+          seleccionada: nuevaDireccion
+        }
+      }));
+
+      // Actualizar en la base de datos
+      const pedidoRef = doc(db, 'pedidosDisponibles1', pedidoId);
+      await updateDoc(pedidoRef, {
+        direccion: nuevaDireccion.direccion,
+        coordenadas: nuevaDireccion.coordenadas || '',
+        actualizadoEn: serverTimestamp()
+      });
+
+      console.log('✅ Dirección actualizada para pedido:', pedidoId, nuevaDireccion);
+    } catch (error) {
+      console.error('Error actualizando dirección del pedido:', error);
+    }
+  };
+
+  // Función para seleccionar una dirección del ListBox
   const seleccionarDireccion = (direccion) => {
+    setDireccionSeleccionada(direccion);
+    setDireccion(direccion.direccion);
+    setCoordenadas(direccion.coordenadas || '');
+    setMostrarSelectorDirecciones(false);
+    console.log('📍 Dirección seleccionada:', direccion);
+  };
+
+  // Función para cerrar el selector de direcciones
+  const cerrarSelectorDirecciones = () => {
+    setMostrarSelectorDirecciones(false);
+    setDireccionSeleccionada(null);
+  };
+
+  // Función para seleccionar una dirección del listado
+  const seleccionarDireccionGuardada = (direccion) => {
     setDireccionSeleccionada(direccion);
     setDireccion(direccion.direccion);
     setCoordenadas(direccion.coordenadas || '');
@@ -1981,6 +2325,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     // Limpiar estados de edición
     setEditandoDireccion(null);
     setTextoEditado('');
+    // Limpiar selector de direcciones del cliente
+    setDireccionesCliente([]);
+    setMostrarSelectorDirecciones(false);
   };
 
   // Función para convertir número a texto de base
@@ -2017,6 +2364,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     setDireccionSeleccionada(null);
     setEditandoDireccion(null);
     setTextoEditado('');
+    // Limpiar selector de direcciones del cliente
+    setDireccionesCliente([]);
+    setMostrarSelectorDirecciones(false);
     
     // Enfocar el campo de teléfono después de limpiar
     setTimeout(() => {
@@ -2038,7 +2388,15 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
      
      try {
 
-       const fecha = new Date(); // Timestamp
+       const fecha = new Date().toLocaleString('es-EC', {
+         year: 'numeric',
+         month: 'numeric',
+         day: 'numeric',
+         hour: 'numeric',
+         minute: '2-digit',
+         second: '2-digit',
+         hour12: true
+       }); // Fecha como cadena en formato "10/9/2025, 5:14:46 a. m."
        const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
        
        // Coordenadas por defecto si no hay coordenadas
@@ -2082,8 +2440,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          clave: clave,
          codigo: nombre || '',
          nombreCliente: nombre || '',
-         telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
-         telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
+         telefono: busquedaPorIdCliente ? telefono : (telefonoCompleto || telefono || ''), // Usar código original si se buscó por ID
+         telefonoCompleto: busquedaPorIdCliente ? telefonoCompletoCliente : telefonoCompleto, // Usar teléfono completo del cliente si se buscó por ID
          direccion: direccion || '',
          base: convertirNumeroABase(base || '0'), // Nuevo campo base
          destino: '', // Se puede editar después
@@ -2104,7 +2462,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          puerto: '3019',
          randon: clave,
          rango: '0', // Rango siempre 0 para pedidos manuales
-         viajes: '',
+         viajes: 'Central', // Usar el valor del campo valor
          foto: '0',
          tarifaSeleccionada: true,
          operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
@@ -2266,8 +2624,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          clave: clave,
          codigo: nombre || '',
          nombreCliente: nombre || '',
-         telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
-         telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
+         telefono: busquedaPorIdCliente ? telefono : (telefonoCompleto || telefono || ''), // Usar código original si se buscó por ID
+         telefonoCompleto: busquedaPorIdCliente ? telefonoCompletoCliente : telefonoCompleto, // Usar teléfono completo del cliente si se buscó por ID
          direccion: direccion || '',
          base: convertirNumeroABase(base || '0'), // Nuevo campo base
          destino: '', // Destino por defecto
@@ -2303,10 +2661,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          central: false,
          coorporativo: false,
          llegue: false,
-         puerto: '3019',
+         puerto: '',
          randon: clave,
          rango: coordenadas ? '1' : '0', // Rango 0 si no hay coordenadas
-         viajes: unidad || '',
+         viajes: '', // Se actualizará con el valor del campo valor
          tarifaSeleccionada: true,
          modoSeleccion: 'manual',
                  modoAsignacion: 'manual', // Campo adicional para indicar asignación manual
@@ -2411,6 +2769,118 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     });
     // Limpiar el mensaje cuando se cierra el modal
     setMensajeConductor('');
+  };
+
+  // Función para abrir modal de edición de datos del cliente
+  const abrirModalEditarCliente = (pedido) => {
+    setModalEditarCliente({
+      open: true,
+      pedido: pedido,
+      nombreCliente: pedido.nombreCliente || pedido.codigo || '',
+      direccion: pedido.direccion || ''
+    });
+  };
+
+  // Función para cerrar modal de edición de datos del cliente
+  const cerrarModalEditarCliente = () => {
+    setModalEditarCliente({
+      open: false,
+      pedido: null,
+      nombreCliente: '',
+      direccion: ''
+    });
+  };
+
+  // Función para actualizar datos del cliente
+  const actualizarDatosCliente = async () => {
+    if (!modalEditarCliente.pedido) return;
+
+    try {
+      const pedidoRef = doc(db, 'pedidosDisponibles1', modalEditarCliente.pedido.id);
+      
+      const datosActualizados = {
+        nombreCliente: modalEditarCliente.nombreCliente.trim(),
+        direccion: modalEditarCliente.direccion.trim(),
+        viajes: modalEditarCliente.pedido.valor || '', // Actualizar viajes con el valor del campo valor
+        actualizadoEn: serverTimestamp()
+      };
+
+      await updateDoc(pedidoRef, datosActualizados);
+      
+      // Actualizar el estado local
+      setViajesAsignados(prev => 
+        prev.map(viaje => 
+          viaje.id === modalEditarCliente.pedido.id 
+            ? { ...viaje, ...datosActualizados }
+            : viaje
+        )
+      );
+
+      setModal({ 
+        open: true, 
+        success: true, 
+        message: 'Datos del cliente actualizados correctamente.' 
+      });
+      
+      cerrarModalEditarCliente();
+    } catch (error) {
+      console.error('Error actualizando datos del cliente:', error);
+      setModal({ 
+        open: true, 
+        success: false, 
+        message: 'Error al actualizar los datos del cliente.' 
+      });
+    }
+  };
+
+  // Función para sincronizar campo viajes con valor en todos los pedidos
+  const sincronizarCamposViajes = async () => {
+    try {
+      console.log('🔄 Iniciando sincronización de campos viajes...');
+      
+      const colecciones = ['pedidosDisponibles1', 'pedidosDisponibles1', 'pedidoEnCurso'];
+      let totalActualizados = 0;
+
+      for (const coleccion of colecciones) {
+        console.log(`📋 Procesando colección: ${coleccion}`);
+        
+        // Obtener todos los documentos de la colección
+        const querySnapshot = await getDocs(collection(db, coleccion));
+        
+        for (const docSnapshot of querySnapshot.docs) {
+          const data = docSnapshot.data();
+          
+          // Verificar si el campo viajes está vacío pero valor tiene contenido
+          if ((!data.viajes || data.viajes === '') && data.valor && data.valor !== '') {
+            console.log(`🔧 Actualizando documento ${docSnapshot.id}: viajes="${data.viajes}" -> valor="${data.valor}"`);
+            
+            // Actualizar el documento
+            await updateDoc(doc(db, coleccion, docSnapshot.id), {
+              viajes: data.valor,
+              actualizadoEn: serverTimestamp()
+            });
+            
+            totalActualizados++;
+          }
+        }
+      }
+
+      console.log(`✅ Sincronización completada. ${totalActualizados} documentos actualizados.`);
+      
+      setModal({ 
+        open: true, 
+        success: true, 
+        message: `Sincronización completada. ${totalActualizados} pedidos actualizados.` 
+      });
+      
+    } catch (error) {
+      console.error('❌ Error en sincronización:', error);
+      setModal({ 
+        open: true, 
+        success: false, 
+        message: 'Error durante la sincronización de campos.' 
+      });
+    }
   };
 
   // Función para enviar mensaje al conductor
@@ -2973,6 +3443,58 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     }
   };
 
+  // Función directa para cancelar pedido sin asignar
+  const cancelarPedidoDirecto = async (pedido, coleccion) => {
+    try {
+      const pedidoRef = doc(db, coleccion, pedido.id);
+      
+      // Actualizar el pedido original
+      await updateDoc(pedidoRef, {
+        estado: 'Cancelado por Cliente Sin Asignar',
+        fechaCancelacion: new Date(),
+        motivoCancelacion: 'Cancelado por el cliente sin asignar unidad'
+      });
+
+      // Guardar en todosLosViajes con la estructura de fecha
+      const fechaActual = new Date();
+      const fechaFormateada = fechaActual.toLocaleDateString('es-EC', {
+        day: '2-digit',
+        month: '2-digit',
+        year: 'numeric'
+      }).replace(/\//g, '-');
+
+      const viajeCanceladoData = {
+        ...pedido,
+        estado: 'Cancelado por Cliente Sin Asignar',
+        fechaCancelacion: fechaActual,
+        motivoCancelacion: 'Cancelado por el cliente sin asignar unidad',
+        fechaRegistroCancelacion: fechaActual,
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+      };
+
+      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
+      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${pedido.id}`;
+      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+
+      // Eliminar el documento original de la colección
+      await deleteDoc(pedidoRef);
+
+      console.log('✅ Pedido cancelado sin asignar directamente');
+      
+      // Actualizar contadores específicos
+      await actualizarContadorReporte('viajesCancelados');
+      await actualizarContadorReporte('viajesCanceladosPorCliente');
+      await actualizarContadorReporte('viajesSinUnidad');
+      
+      // Mostrar mensaje de éxito
+      setModal({ open: true, success: true, message: 'Pedido cancelado exitosamente' });
+      
+    } catch (error) {
+      console.error('❌ Error al cancelar pedido:', error);
+      setModal({ open: true, success: false, message: 'Error al cancelar el pedido' });
+    }
+  };
+
   // Funciones para pedidos disponibles
   const cancelarPedidoSinAsignar = async () => {
     if (!modalAccionesPedido.pedido) return;
@@ -3349,7 +3871,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          tarifaSeleccionada: true,
          modoAsignacion: 'manual', // Campo adicional para indicar asignación manual
          tipoEmpresa: tipoEmpresa, // Nuevo campo para empresa/efectivo
-         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+         puerto: pedidoOriginal.puerto || '3005' // Preservar el puerto original del pedido
        };
 
        // 3. Agregar a pedidoEnCurso
@@ -3471,8 +3994,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         clave: clave,
         codigo: nombre || '',
         nombreCliente: nombre || '',
-        telefono: telefonoCompleto || telefono || '', // Usar telefonoCompleto si está disponible
-        telefonoCompleto: telefonoCompleto, // Teléfono completo para WhatsApp
+        telefono: busquedaPorIdCliente ? telefono : (telefonoCompleto || telefono || ''), // Usar código original si se buscó por ID
+        telefonoCompleto: busquedaPorIdCliente ? telefonoCompletoCliente : telefonoCompleto, // Usar teléfono completo del cliente si se buscó por ID
         direccion: direccion || '',
         base: convertirNumeroABase(base || '0'), // Nuevo campo base
         destino: 'QUITO-ECUADOR',
@@ -3497,7 +4020,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         puerto: '3019',
         randon: clave,
         rango: modoSeleccionUI === 'Manual' ? '0' : (coordenadas ? '1' : '0'), // Rango 0 si es manual, 1 si hay coordenadas en aplicación
-        viajes: unidad || '',
+        viajes: '', // Se actualizará con el valor del campo valor
         foto: '0',
         tarifaSeleccionada: true,
         
@@ -3949,45 +4472,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               }}
             >
               <option value="Efectivo">💵 Efectivo</option>
-              <option value="Acosaustro">🏢 Acosaustro</option>
-              <option value="Larrea y Ortiz">🏢 Larrea y Ortiz</option>
-              <option value="Aekansa">🏢 Aekansa</option>
-              <option value="Equindeca">🏢 Equindeca</option>
-              <option value="U. Salesiana">🏢 U. Salesiana</option>
-              <option value="Ecuador tax">🏢 Ecuador tax</option>
-              <option value="U. Laica">🏢 U. Laica</option>
-              <option value="Godfilms">🏢 Godfilms</option>
-              <option value="Odonto">🏢 Odonto</option>
-              <option value="Alianza Francesa">🏢 Alianza Francesa</option>
-              <option value="fundacion de damas">🏢 Fundacion de damas</option>
-              <option value="El juri">🏢 El juri</option>
-              <option value="Godcorp">🏢 Godcorp</option>
-              <option value="Expoplaza">🏢 Expoplaza</option>
-              <option value="PSI">🏢 PSI</option>
-              <option value="Amgrucia">🏢 Amgrucia</option>
-              <option value="Prohorizon">🏢 Prohorizon</option>
-              <option value="Sonkir">🏢 Sonkir</option>
-              <option value="Mediken">🏢 Mediken</option>
-              <option value="Xerticaec">🏢 Xerticaec</option>
-              <option value="Citikold">🏢 Citikold</option>
-              <option value="Medystia">🏢 Medystia</option>
-              <option value="Sinergia">🏢 Sinergia</option>
-              <option value="Vector global">🏢 Vector global</option>
-              <option value="ORODELTI">🏢 ORODELTI</option>
-              <option value="Expoguayaquil">🏢 Expoguayaquil</option>
-              <option value="Canodros">🏢 Canodros</option>
-              <option value="TRANSFERENCIA">🏢 TRANSFERENCIA</option>
-              <option value="Rocnarf">🏢 Rocnarf</option>
-              <option value="Reysac">🏢 Reysac</option>
-              <option value="taxiMEDIKEN">🏢 taxiMEDIKEN</option>
-              <option value="INSICHTBUILDING S.A">🏢 INSICHTBUILDING S.A</option>
-              <option value="Aduanatax">🏢 Aduanatax</option>
-              <option value="ACOSAUSTRO">🏢 ACOSAUSTRO</option>
-              <option value="TAXI JELUO S.A">🏢 TAXI JELUO S.A</option>
-              <option value="EFC">🏢 EFC</option>
-              <option value="Valoratec">🏢 Valoratec</option>
-              <option value="SOLARIS">🏢 SOLARIS</option>
-              <option value="QFCORP">🏢 QFCORP</option>
             </select>
             
             <select 
@@ -4119,28 +4603,153 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           marginBottom: '15px',
           flexWrap: 'wrap'
         }}>
-          <input
-            type="text"
-            placeholder="Ingrese dirección"
-            value={direccion}
-            onChange={(e) => setDireccion(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Delete' || e.key === 'Enter') {
-                e.preventDefault();
-                e.stopPropagation(); // Prevenir que el evento llegue al formulario
-                handleInsertarViajePendiente();
-              }
-            }}
-            style={{
-              padding: '12px 16px',
-              border: '2px solid #666',
-              borderRadius: 4,
-              fontSize: '18px',
-              fontWeight: 'bold',
-              flex: '1 1 300px',
-              minWidth: '250px'
-            }}
-          />
+          <div style={{ flex: '1 1 300px', minWidth: '250px', position: 'relative' }}>
+            <input
+              type="text"
+              placeholder="Ingrese dirección"
+              value={direccion}
+              onChange={(e) => setDireccion(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Delete' || e.key === 'Enter') {
+                  e.preventDefault();
+                  e.stopPropagation(); // Prevenir que el evento llegue al formulario
+                  handleInsertarViajePendiente();
+                }
+              }}
+              style={{
+                padding: '12px 16px',
+                border: '2px solid #666',
+                borderRadius: 4,
+                fontSize: '18px',
+                fontWeight: 'bold',
+                width: '100%',
+                boxSizing: 'border-box'
+              }}
+            />
+            
+            {/* Botón para mostrar selector de direcciones */}
+            {direccionesCliente.length > 0 && (
+              <button
+                type="button"
+                onClick={() => setMostrarSelectorDirecciones(!mostrarSelectorDirecciones)}
+                style={{
+                  position: 'absolute',
+                  right: '8px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  padding: '6px 8px',
+                  fontSize: '12px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+                title="Seleccionar dirección guardada"
+              >
+                📍 {direccionesCliente.length}
+              </button>
+            )}
+          </div>
+
+          {/* ListBox de direcciones del cliente */}
+          {mostrarSelectorDirecciones && direccionesCliente.length > 0 && (
+            <div style={{
+              position: 'absolute',
+              top: '100%',
+              left: 0,
+              right: 0,
+              background: 'white',
+              border: '2px solid #3b82f6',
+              borderRadius: '8px',
+              boxShadow: '0 4px 12px rgba(0,0,0,0.15)',
+              zIndex: 1000,
+              maxHeight: '200px',
+              overflowY: 'auto',
+              marginTop: '4px'
+            }}>
+              <div style={{
+                padding: '8px 12px',
+                background: '#f8fafc',
+                borderBottom: '1px solid #e2e8f0',
+                fontWeight: 'bold',
+                fontSize: '12px',
+                color: '#374151',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center'
+              }}>
+                <span>📍 Direcciones guardadas ({direccionesCliente.length})</span>
+                <button
+                  onClick={cerrarSelectorDirecciones}
+                  style={{
+                    background: 'none',
+                    border: 'none',
+                    color: '#6b7280',
+                    cursor: 'pointer',
+                    fontSize: '16px',
+                    padding: '0'
+                  }}
+                >
+                  ✖️
+                </button>
+              </div>
+              
+              {direccionesCliente.map((direccion, index) => (
+                <div
+                  key={index}
+                  onClick={() => seleccionarDireccion(direccion)}
+                  style={{
+                    padding: '12px',
+                    borderBottom: index < direccionesCliente.length - 1 ? '1px solid #e2e8f0' : 'none',
+                    cursor: 'pointer',
+                    transition: 'background-color 0.2s',
+                    background: direccionSeleccionada === direccion ? '#f0f9ff' : 'transparent'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (direccionSeleccionada !== direccion) {
+                      e.target.style.background = '#f8fafc';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (direccionSeleccionada !== direccion) {
+                      e.target.style.background = 'transparent';
+                    }
+                  }}
+                >
+                  <div style={{
+                    fontWeight: 'bold',
+                    color: '#1f2937',
+                    fontSize: '14px',
+                    marginBottom: '4px'
+                  }}>
+                    {direccion.direccion}
+                  </div>
+                  {direccion.coordenadas && (
+                    <div style={{
+                      color: '#6b7280',
+                      fontSize: '12px'
+                    }}>
+                      📍 {direccion.coordenadas}
+                    </div>
+                  )}
+                  {direccionSeleccionada === direccion && (
+                    <div style={{
+                      color: '#3b82f6',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      marginTop: '4px'
+                    }}>
+                      ✓ Seleccionada
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
           
           {modoSeleccion === 'aplicacion' && (
             <button
@@ -4177,8 +4786,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             </button>
           )}
           
-                     {modoSeleccionUI === 'Manual' && (
-             <>
                <input
                  ref={baseInputRef}
                  type="text"
@@ -4326,8 +4933,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                >
                  Pendiente
                </button>
-             </>
-           )}
         </div>
 
         {/* Listado de direcciones guardadas - JUSTO DESPUÉS DEL INPUT DE DIRECCIÓN */}
@@ -4759,6 +5364,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             </span>
           </h3>
           
+          <div style={{ display: 'flex', gap: '8px' }}>
           <button
             onClick={() => {
               console.log('🔄 Botón actualizar presionado');
@@ -4780,6 +5386,29 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           >
             🔄 Actualizar
           </button>
+          
+          <button
+            onClick={() => {
+              console.log('🔄 Botón sincronizar presionado');
+              sincronizarCamposViajes();
+            }}
+            style={{
+              background: 'rgba(255,165,0,0.8)', // Color naranja para diferenciarlo
+              border: '1px solid rgba(255,165,0,0.5)',
+              color: 'white',
+              padding: '8px 16px',
+              borderRadius: 8,
+              fontSize: 14,
+              fontWeight: 'bold',
+              cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}
+          >
+            🔄 Sincronizar Viajes
+          </button>
+          </div>
         </div>
 
         {cargandoViajes ? (
@@ -4838,98 +5467,83 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             }}>
                              <thead>
                  <tr style={{ background: '#f8fafc' }}>
-                                       <th style={{
-                      padding: '12px 16px',
-                      textAlign: 'center',
-                      fontWeight: 'bold',
-                      color: '#374151',
-                      borderBottom: '2px solid #e5e7eb',
-                      whiteSpace: 'nowrap'
-          
-          
-                    }}>
-                      🕐 Hora
-                    </th>
                    <th style={{
-                     padding: '12px 16px',
+                     padding: '12px 8px',
                      textAlign: 'left',
                      fontWeight: 'bold',
                      color: '#374151',
                      borderBottom: '2px solid #e5e7eb',
-                     whiteSpace: 'nowrap'
+                     whiteSpace: 'nowrap',
+                     width: '120px'
                    }}>
                      📞 Teléfono
                    </th>
                    <th style={{
-                     padding: '12px 16px',
+                     padding: '12px 6px',
                      textAlign: 'left',
                      fontWeight: 'bold',
                      color: '#374151',
                      borderBottom: '2px solid #e5e7eb',
-                     whiteSpace: 'nowrap'
+                     whiteSpace: 'nowrap',
+                     width: '140px'
                    }}>
                      👤 Cliente
                    </th>
                    <th style={{
-                     padding: '12px 16px',
+                     padding: '12px 6px',
                      textAlign: 'left',
                      fontWeight: 'bold',
                      color: '#374151',
                      borderBottom: '2px solid #e5e7eb',
-                     whiteSpace: 'nowrap'
+                     whiteSpace: 'nowrap',
+                     width: '80px'
+                   }}>
+                     🎯 Destino
+                   </th>
+                   <th style={{
+                     padding: '12px 12px',
+                     textAlign: 'left',
+                     fontWeight: 'bold',
+                     color: '#374151',
+                     borderBottom: '2px solid #e5e7eb',
+                     whiteSpace: 'nowrap',
+                     minWidth: '400px'
                    }}>
                      📍 Dirección
                    </th>
                    <th style={{
-                     padding: '12px 16px',
-                     textAlign: 'left',
-                     fontWeight: 'bold',
-                     color: '#374151',
-                     borderBottom: '2px solid #e5e7eb',
-                     whiteSpace: 'nowrap'
-                   }}>
-                     🏘️ Sector
-                   </th>
-                   <th style={{
-                     padding: '12px 16px',
+                     padding: '12px 4px',
                      textAlign: 'center',
                      fontWeight: 'bold',
                      color: '#374151',
                      borderBottom: '2px solid #e5e7eb',
-                     whiteSpace: 'nowrap'
+                     whiteSpace: 'nowrap',
+                     width: '80px'
                    }}>
                      🏢 Base
                    </th>
                    <th style={{
-                     padding: '12px 16px',
+                     padding: '12px 4px',
                      textAlign: 'center',
                      fontWeight: 'bold',
                      color: '#374151',
                      borderBottom: '2px solid #e5e7eb',
-                     whiteSpace: 'nowrap'
+                     whiteSpace: 'nowrap',
+                     width: '90px'
                    }}>
                      ⏱️ Tiempo
                    </th>
                    <th style={{
-                     padding: '12px 16px',
+                     padding: '12px 4px',
                      textAlign: 'center',
                      fontWeight: 'bold',
                      color: '#374151',
                      borderBottom: '2px solid #e5e7eb',
-                     whiteSpace: 'nowrap'
+                     whiteSpace: 'nowrap',
+                     width: '80px'
                    }}>
                      🚕 Unidad
                    </th>
-                    <th style={{
-                      padding: '12px 16px',
-                      textAlign: 'center',
-                      fontWeight: 'bold',
-                      color: '#374151',
-                      borderBottom: '2px solid #e5e7eb',
-                      whiteSpace: 'nowrap'
-                    }}>
-                      🔐 Aut.
-                    </th>
                    <th style={{
                      padding: '12px 16px',
                      textAlign: 'center',
@@ -4958,71 +5572,262 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                       e.currentTarget.style.background = index % 2 === 0 ? '#fff' : '#fafbff';
                                          }}
                    >
-                                           <td style={{
-                        padding: '12px 16px',
-                        textAlign: 'center',
-                        color: '#6b7280',
-                        fontSize: 12,
-                        fontWeight: 'bold'
-                      }}>
-                        {viaje.fecha ? 
-                          (() => {
-                            let fechaObj;
-                            if (viaje.fecha.toDate) {
-                              // Es un Firestore Timestamp
-                              fechaObj = viaje.fecha.toDate();
-                            } else if (viaje.fecha.seconds) {
-                              // Es un Firestore Timestamp como objeto
-                              fechaObj = new Date(viaje.fecha.seconds * 1000);
-                            } else {
-                              // Es un objeto Date normal
-                              fechaObj = new Date(viaje.fecha);
-                            }
-                            return fechaObj.toLocaleTimeString('es-EC', {
-                              hour: '2-digit',
-                              minute: '2-digit'
-                            });
-                          })()
-                          : '-'}
-                      </td>
                      <td style={{
-                       padding: '12px 16px',
+                       padding: '12px 8px',
                        fontWeight: 'bold',
-                       color: '#1f2937'
+                       color: '#1f2937',
+                       width: '120px'
                      }}>
                        {viaje.telefono || '-'}
                      </td>
                      <td style={{
-                       padding: '12px 16px',
-                       color: '#374151'
+                       padding: '12px 6px',
+                       color: '#374151',
+                       position: 'relative',
+                       width: '140px'
                      }}>
-                       {viaje.nombreCliente || viaje.codigo || '-'}
+                       <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                         <div style={{ display: 'flex', flexDirection: 'column' }}>
+                           <span>{viaje.nombreCliente || viaje.codigo || '-'}</span>
+                           {viaje.coleccion && (
+                             <span style={{
+                               fontSize: '10px',
+                               color: viaje.coleccion === 'pedidosDisponibles1' ? '#10b981' : '#6b7280',
+                               fontWeight: 'bold'
+                             }}>
+                               {viaje.coleccion === 'pedidosDisponibles1' ? '📊 DB1' : '📋 DB0'}
+                             </span>
+                           )}
+                         </div>
+                         {(!viaje.nombreCliente || viaje.nombreCliente === 'Desconocido' || !viaje.direccion || viaje.direccion === 'No especificada') && (
+                           <button
+                             onClick={() => abrirModalEditarCliente(viaje)}
+                             style={{
+                               background: '#3b82f6',
+                               color: 'white',
+                               border: 'none',
+                               borderRadius: '4px',
+                               padding: '4px 8px',
+                               fontSize: '10px',
+                               cursor: 'pointer',
+                               display: 'flex',
+                               alignItems: 'center',
+                               gap: '4px'
+                             }}
+                             title="Editar datos del cliente"
+                           >
+                             ✏️
+                           </button>
+                         )}
+                       </div>
                      </td>
                      <td style={{
-                       padding: '12px 16px',
+                       padding: '12px 6px',
                        color: '#374151',
-                       maxWidth: 200,
+                       width: '80px',
                        overflow: 'hidden',
                        textOverflow: 'ellipsis',
                        whiteSpace: 'nowrap'
                      }}>
-                       {viaje.direccion || '-'}
+                       {(viaje.destino || '-').length > 10 ? `${(viaje.destino || '-').substring(0, 10)}...` : (viaje.destino || '-')}
                      </td>
                      <td style={{
-                       padding: '12px 16px',
+                       padding: '12px 12px',
                        color: '#374151',
-                       maxWidth: 150,
-                       overflow: 'hidden',
-                       textOverflow: 'ellipsis',
-                       whiteSpace: 'nowrap'
+                       minWidth: '400px',
+                       maxWidth: '500px'
                      }}>
-                       {viaje.destino || '-'}
+                       {(() => {
+                         // Obtener direcciones reales del pedido y del cliente
+                         const direccionesReales = [];
+                         
+                         // 1. Agregar la dirección actual del pedido si existe
+                         if (viaje.direccion && viaje.direccion.trim() !== '') {
+                           direccionesReales.push({
+                             direccion: viaje.direccion,
+                             coordenadas: viaje.coordenadas || '',
+                             tipo: 'actual'
+                           });
+                         }
+                         
+                         // 2. Agregar direcciones del array direccionesCliente del pedido si existe
+                         if (viaje.direccionesCliente && Array.isArray(viaje.direccionesCliente)) {
+                           viaje.direccionesCliente.forEach(dir => {
+                             if (dir.direccion && dir.direccion.trim() !== '' && dir.direccion !== viaje.direccion) {
+                               direccionesReales.push({
+                                 direccion: dir.direccion,
+                                 coordenadas: dir.coordenadas || '',
+                                 tipo: 'cliente'
+                               });
+                             }
+                           });
+                         }
+                         
+                         // 3. Agregar direcciones cargadas del cliente si existen
+                         const direccionesPedido = direccionesSeleccionadasPedidos[viaje.id];
+                         if (direccionesPedido && direccionesPedido.direcciones && Array.isArray(direccionesPedido.direcciones)) {
+                           direccionesPedido.direcciones.forEach(dir => {
+                             if (dir.direccion && dir.direccion.trim() !== '' && dir.direccion !== viaje.direccion) {
+                               // Verificar que no esté ya agregada
+                               const yaExiste = direccionesReales.some(d => d.direccion === dir.direccion);
+                               if (!yaExiste) {
+                                 direccionesReales.push({
+                                   direccion: dir.direccion,
+                                   coordenadas: dir.coordenadas || '',
+                                   tipo: 'cliente'
+                                 });
+                               }
+                             }
+                           });
+                         }
+                         
+                         // 4. Si no hay direcciones reales, mostrar solo la actual o "Sin dirección"
+                         if (direccionesReales.length === 0) {
+                           direccionesReales.push({
+                             direccion: viaje.direccion || 'Sin dirección',
+                             coordenadas: viaje.coordenadas || '',
+                             tipo: 'actual'
+                           });
+                         }
+                         
+                         return (
+                           <div style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                             <select
+                               value={viaje.direccion || ''}
+                               onChange={(e) => {
+                                 const direccionSeleccionada = direccionesReales.find(
+                                   dir => dir.direccion === e.target.value
+                                 );
+                                 if (direccionSeleccionada) {
+                                   // Determinar la colección correcta según el origen del pedido
+                                   const coleccionNombre = viaje.coleccion || 'pedidosDisponibles1';
+                                   const pedidoRef = doc(db, coleccionNombre, viaje.id);
+                                   updateDoc(pedidoRef, {
+                                     direccion: direccionSeleccionada.direccion,
+                                     coordenadas: direccionSeleccionada.coordenadas || '',
+                                     actualizadoEn: serverTimestamp()
+                                   });
+                                   console.log('✅ Dirección actualizada en:', coleccionNombre, viaje.id);
+                                 }
+                               }}
+                               style={{
+                                 flex: 1,
+                                 padding: '6px 8px',
+                                 border: '1px solid #d1d5db',
+                                 borderRadius: '4px',
+                                 fontSize: '12px',
+                                 backgroundColor: '#fff',
+                                 color: '#374151',
+                                 cursor: 'pointer'
+                               }}
+                             >
+                               {direccionesReales.map((dir, idx) => (
+                                 <option key={idx} value={dir.direccion}>
+                                   {dir.tipo === 'actual' ? `📍 ${dir.direccion}` : `🏠 ${dir.direccion}`}
+                                 </option>
+                               ))}
+                             </select>
+                             <button
+                               onClick={() => {
+                                 // Mostrar input personalizado
+                                 // eslint-disable-next-line no-restricted-globals
+                                 const nuevaDireccion = prompt('Ingrese nueva dirección:');
+                                 if (nuevaDireccion) {
+                                   // Determinar la colección correcta según el origen del pedido
+                                   const coleccionNombre = viaje.coleccion || 'pedidosDisponibles1';
+                                   const pedidoRef = doc(db, coleccionNombre, viaje.id);
+                                   updateDoc(pedidoRef, {
+                                     direccion: nuevaDireccion,
+                                     actualizadoEn: serverTimestamp()
+                                   });
+                                   console.log('✅ Nueva dirección agregada en:', coleccionNombre, viaje.id);
+                                 }
+                               }}
+                               style={{
+                                 background: '#10b981',
+                                 color: 'white',
+                                 border: 'none',
+                                 borderRadius: '4px',
+                                 padding: '4px 6px',
+                                 fontSize: '10px',
+                                 cursor: 'pointer'
+                               }}
+                               title="Agregar dirección personalizada"
+                             >
+                               ➕
+                             </button>
+                             <button
+                               onClick={async () => {
+                                 const direccionActual = viaje.direccion;
+                                 // eslint-disable-next-line no-restricted-globals
+                                 const confirmar = confirm(`¿Está seguro de que desea eliminar la dirección "${direccionActual}" del cliente?`);
+                                 if (confirmar) {
+                                   try {
+                                     // 1. Buscar el cliente por teléfono
+                                     const q = query(collection(db, 'clientes'), where("telefono", "==", viaje.telefono));
+                                     const snapshot = await getDocs(q);
+                                     
+                                     if (!snapshot.empty) {
+                                       const clienteDoc = snapshot.docs[0];
+                                       const clienteData = clienteDoc.data();
+                                       
+                                       // 2. Filtrar la dirección del array direccionesCliente
+                                       if (clienteData.direccionesCliente && clienteData.direccionesCliente.length > 0) {
+                                         const direccionesActualizadas = clienteData.direccionesCliente.filter(
+                                           dir => dir.direccion !== direccionActual
+                                         );
+                                         
+                                         // 3. Actualizar el documento del cliente
+                                         await updateDoc(clienteDoc.ref, {
+                                           direccionesCliente: direccionesActualizadas
+                                         });
+                                         
+                                         console.log('📍 Dirección eliminada del cliente:', direccionActual);
+                                       }
+                                     }
+                                     
+                                     // 4. Limpiar la dirección del pedido
+                                     const coleccionNombre = viaje.coleccion || 'pedidosDisponibles1';
+                                     const pedidoRef = doc(db, coleccionNombre, viaje.id);
+                                     await updateDoc(pedidoRef, {
+                                       direccion: '',
+                                       coordenadas: '',
+                                       actualizadoEn: serverTimestamp()
+                                     });
+                                     console.log('✅ Dirección eliminada del pedido en:', coleccionNombre, viaje.id);
+                                     
+                                     // eslint-disable-next-line no-restricted-globals
+                                     alert('Dirección eliminada correctamente del cliente y del pedido.');
+                                   } catch (error) {
+                                     console.error('Error eliminando dirección:', error);
+                                     // eslint-disable-next-line no-restricted-globals
+                                     alert('Error al eliminar la dirección.');
+                                   }
+                                 }
+                               }}
+                               style={{
+                                 background: '#ef4444',
+                                 color: 'white',
+                                 border: 'none',
+                                 borderRadius: '4px',
+                                 padding: '4px 6px',
+                                 fontSize: '10px',
+                                 cursor: 'pointer'
+                               }}
+                               title="Eliminar dirección del cliente y pedido"
+                             >
+                               🗑️
+                             </button>
+                           </div>
+                         );
+                       })()}
                      </td>
                      <td style={{
-                       padding: '12px 16px',
+                       padding: '12px 4px',
                        textAlign: 'center',
                        fontWeight: 'bold',
-                       color: '#7c3aed'
+                       color: '#7c3aed',
+                       width: '80px'
                      }}>
                        {!viaje.base ? (
                          <input
@@ -5040,8 +5845,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                            }}
                            maxLength="2"
                            style={{
-                             width: '80px',
-                             padding: '4px 8px',
+                             width: '60px',
+                             padding: '4px 6px',
                              border: '1px solid #ccc',
                              borderRadius: 4,
                              textAlign: 'center',
@@ -5055,10 +5860,11 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                        )}
                      </td>
                      <td style={{
-                       padding: '12px 16px',
+                       padding: '12px 4px',
                        textAlign: 'center',
                        fontWeight: 'bold',
-                       color: '#059669'
+                       color: '#059669',
+                       width: '90px'
                      }}>
                        {!viaje.tiempo ? (
                        <input
@@ -5076,8 +5882,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                          }}
                          maxLength="2"
                          style={{
-                           width: '60px',
-                           padding: '4px 8px',
+                           width: '70px',
+                           padding: '4px 6px',
                            border: '1px solid #ccc',
                            borderRadius: 4,
                            textAlign: 'center',
@@ -5091,11 +5897,12 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                      )}
                      </td>
                       <td style={{
-                        padding: '12px 16px',
+                        padding: '12px 4px',
                         textAlign: 'center',
                         fontWeight: 'bold',
                         color: '#dc2626',
-                        fontSize: 16
+                        fontSize: 16,
+                        width: '80px'
                       }}>
                         {!viaje.numeroUnidad ? (
                           <input
@@ -5110,7 +5917,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                             maxLength="3"
                             style={{
                               width: '60px',
-                              padding: '4px 8px',
+                              padding: '4px 6px',
                               border: '1px solid #ccc',
                               borderRadius: 4,
                               textAlign: 'center',
@@ -5133,43 +5940,64 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                         )}
                       </td>
 
-                      <td style={{
-                        padding: '12px 16px',
-                        textAlign: 'center',
-                        fontWeight: 'bold',
-                        color: '#111827'
-                      }}>
-                        {viaje.autorizacion ?? '-'}
-                      </td>
 
                       <td style={{
                         padding: '12px 16px',
                         textAlign: 'center'
                       }}>
-                        <button
-                          onClick={() => abrirModalAccionesPedido(viaje, 'pedidosDisponibles1')}
-                          style={{
-                            padding: '4px 12px',
-                            borderRadius: 20,
-                            border: 'none',
-                            fontSize: 12,
-                            fontWeight: 'bold',
-                            cursor: 'pointer',
-                            background: (viaje.tiempo && viaje.numeroUnidad) ? '#10b981' : '#f59e0b',
-                            color: 'white',
-                            transition: 'all 0.2s ease'
-                          }}
-                          onMouseEnter={(e) => {
-                            e.target.style.transform = 'scale(1.05)';
-                            e.target.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
-                          }}
-                          onMouseLeave={(e) => {
-                            e.target.style.transform = 'scale(1)';
-                            e.target.style.boxShadow = 'none';
-                          }}
-                        >
-                          {(viaje.tiempo && viaje.numeroUnidad) ? 'Asignado' : 'Pendiente'}
-                        </button>
+                        {(viaje.tiempo && viaje.numeroUnidad) ? (
+                          <button
+                            onClick={() => abrirModalAccionesPedido(viaje, viaje.coleccion || 'pedidosDisponibles1')}
+                            style={{
+                              padding: '4px 12px',
+                              borderRadius: 20,
+                              border: 'none',
+                              fontSize: 12,
+                              fontWeight: 'bold',
+                              cursor: 'pointer',
+                              background: '#10b981',
+                              color: 'white',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.target.style.transform = 'scale(1.05)';
+                              e.target.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.target.style.transform = 'scale(1)';
+                              e.target.style.boxShadow = 'none';
+                            }}
+                          >
+                            Asignado
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => cancelarPedidoDirecto(viaje, viaje.coleccion || 'pedidosDisponibles1')}
+                            style={{
+                              padding: '4px 12px',
+                              borderRadius: 20,
+                              border: 'none',
+                              fontSize: 12,
+                              fontWeight: 'bold',
+                              cursor: 'pointer',
+                              background: '#dc2626',
+                              color: 'white',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onMouseEnter={(e) => {
+                              e.target.style.transform = 'scale(1.05)';
+                              e.target.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
+                              e.target.style.background = '#b91c1c';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.target.style.transform = 'scale(1)';
+                              e.target.style.boxShadow = 'none';
+                              e.target.style.background = '#dc2626';
+                            }}
+                          >
+                            Cancelar
+                          </button>
+                        )}
                       </td>
                    </tr>
                 ))}
@@ -5272,16 +6100,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                 <tr style={{ background: '#f8fafc' }}>
                   <th style={{
                     padding: '12px 16px',
-                    textAlign: 'center',
-                    fontWeight: 'bold',
-                    color: '#374151',
-                    borderBottom: '2px solid #e5e7eb',
-                    whiteSpace: 'nowrap'
-                  }}>
-                    🕐 Hora
-                  </th>
-                  <th style={{
-                    padding: '12px 16px',
                     textAlign: 'left',
                     fontWeight: 'bold',
                     color: '#374151',
@@ -5338,16 +6156,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     borderBottom: '2px solid #e5e7eb',
                     whiteSpace: 'nowrap'
                   }}>
-                    🔐 Aut.
-                  </th>
-                  <th style={{
-                    padding: '12px 16px',
-                    textAlign: 'center',
-                    fontWeight: 'bold',
-                    color: '#374151',
-                    borderBottom: '2px solid #e5e7eb',
-                    whiteSpace: 'nowrap'
-                  }}>
                     🏢 Base
                   </th>
                   <th style={{
@@ -5389,33 +6197,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     >
                     <td style={{
                       padding: '12px 16px',
-                      textAlign: 'center',
-                      color: '#6b7280',
-                      fontSize: 12,
-                      fontWeight: 'bold'
-                    }}>
-                      {pedido.fecha ? 
-                        (() => {
-                          let fechaObj;
-                          if (pedido.fecha.toDate) {
-                            // Es un Firestore Timestamp
-                            fechaObj = pedido.fecha.toDate();
-                          } else if (pedido.fecha.seconds) {
-                            // Es un Firestore Timestamp como objeto
-                            fechaObj = new Date(pedido.fecha.seconds * 1000);
-                          } else {
-                            // Es un objeto Date normal
-                            fechaObj = new Date(pedido.fecha);
-                          }
-                          return fechaObj.toLocaleTimeString('es-EC', {
-                            hour: '2-digit',
-                            minute: '2-digit'
-                          });
-                        })()
-                        : '-'}
-                    </td>
-                    <td style={{
-                      padding: '12px 16px',
                       fontWeight: 'bold',
                       color: '#1f2937'
                     }}>
@@ -5452,14 +6233,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                       color: '#dc2626'
                     }}>
                       {pedido.unidad || pedido.numeroUnidad || '-'}
-                    </td>
-                    <td style={{
-                      padding: '12px 16px',
-                      textAlign: 'center',
-                      fontWeight: 'bold',
-                      color: '#111827'
-                    }}>
-                      {pedido.autorizacion ?? '-'}
                     </td>
                     <td style={{
                       padding: '12px 16px',
@@ -6219,43 +6992,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               {/* Botones para pedidos en curso */}
               {modalAccionesPedido.coleccion === 'pedidoEnCurso' && (
                 <>
-              {/* Mostrar autorización actual si existe */}
-              {modalAccionesPedido.pedido?.autorizacion && (
-                <div style={{
-                  padding: '10px 12px',
-                  borderRadius: 8,
-                  background: '#eef2ff',
-                  color: '#3730a3',
-                  fontWeight: 700,
-                  textAlign: 'center'
-                }}>
-                  🔐 Autorización: {modalAccionesPedido.pedido.autorizacion}
-                </div>
-              )}
-
-              <button
-                onClick={generarAutorizacionParaPedidoEnCurso}
-                disabled={Boolean(modalAccionesPedido.pedido?.autorizacion)}
-                style={{
-                  padding: '12px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: Boolean(modalAccionesPedido.pedido?.autorizacion) ? '#9ca3af' : '#2563eb',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: Boolean(modalAccionesPedido.pedido?.autorizacion) ? 'not-allowed' : 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  if (!modalAccionesPedido.pedido?.autorizacion) e.target.style.backgroundColor = '#1d4ed8';
-                }}
-                onMouseLeave={(e) => {
-                  if (!modalAccionesPedido.pedido?.autorizacion) e.target.style.backgroundColor = '#2563eb';
-                }}
-              >
-                🔐 Generar Autorización
-              </button>
 
               <button
                 onClick={cancelarPedidoPorCliente}
@@ -6303,28 +7039,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                     🚫 Cancelado por Unidad
               </button>
 
-              <button
-                    onClick={generarVoucher}
-                style={{
-                  padding: '12px 20px',
-                  border: 'none',
-                  borderRadius: '8px',
-                  backgroundColor: '#7c3aed',
-                  color: 'white',
-                  fontSize: '14px',
-                  fontWeight: 'bold',
-                  cursor: 'pointer',
-                  transition: 'all 0.2s'
-                }}
-                onMouseEnter={(e) => {
-                  e.target.style.backgroundColor = '#6d28d9';
-                }}
-                onMouseLeave={(e) => {
-                  e.target.style.backgroundColor = '#7c3aed';
-                }}
-              >
-                    🎫 Generar Voucher
-              </button>
 
               <button
                     onClick={finalizarPedido}
@@ -6510,6 +7224,165 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                 }}
               >
                 ✖️ Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Modal de edición de datos del cliente */}
+      {modalEditarCliente.open && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.5)',
+          display: 'flex',
+          justifyContent: 'center',
+          alignItems: 'center',
+          zIndex: 1000
+        }}>
+          <div style={{
+            background: 'white',
+            padding: '30px',
+            borderRadius: '12px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+            width: '500px',
+            maxWidth: '90vw',
+            textAlign: 'center'
+          }}>
+            <h3 style={{
+              margin: '0 0 20px 0',
+              color: '#1f2937',
+              fontSize: '20px',
+              fontWeight: 'bold'
+            }}>
+              ✏️ Editar Datos del Cliente
+            </h3>
+            
+            <div style={{
+              marginBottom: '20px',
+              padding: '15px',
+              background: '#f8fafc',
+              borderRadius: '8px',
+              textAlign: 'left'
+            }}>
+              <p style={{ margin: '0 0 10px 0', fontWeight: 'bold', color: '#374151' }}>
+                📞 Teléfono: {modalEditarCliente.pedido?.telefono || 'N/A'}
+              </p>
+              <p style={{ margin: '0', color: '#6b7280' }}>
+                🏷️ Tipo: {modalEditarCliente.pedido?.tipopedido === 'Automático' ? 'Aplicación' : 'Manual'}
+              </p>
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '8px',
+                fontWeight: 'bold',
+                color: '#374151',
+                textAlign: 'left'
+              }}>
+                👤 Nombre del Cliente
+              </label>
+              <input
+                type="text"
+                value={modalEditarCliente.nombreCliente}
+                onChange={(e) => setModalEditarCliente(prev => ({
+                  ...prev,
+                  nombreCliente: e.target.value
+                }))}
+                placeholder="Ingrese el nombre del cliente"
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{
+                display: 'block',
+                marginBottom: '8px',
+                fontWeight: 'bold',
+                color: '#374151',
+                textAlign: 'left'
+              }}>
+                📍 Dirección
+              </label>
+              <textarea
+                value={modalEditarCliente.direccion}
+                onChange={(e) => setModalEditarCliente(prev => ({
+                  ...prev,
+                  direccion: e.target.value
+                }))}
+                placeholder="Ingrese la dirección del cliente"
+                rows={3}
+                style={{
+                  width: '100%',
+                  padding: '12px',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: '6px',
+                  fontSize: '14px',
+                  fontFamily: 'inherit',
+                  resize: 'vertical',
+                  boxSizing: 'border-box'
+                }}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
+              <button
+                onClick={actualizarDatosCliente}
+                style={{
+                  padding: '12px 24px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#3b82f6',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#2563eb';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#3b82f6';
+                }}
+              >
+                💾 Guardar Cambios
+              </button>
+
+              <button
+                onClick={cerrarModalEditarCliente}
+                style={{
+                  padding: '12px 24px',
+                  border: '2px solid #6b7280',
+                  borderRadius: '8px',
+                  backgroundColor: 'transparent',
+                  color: '#6b7280',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#f3f4f6';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = 'transparent';
+                }}
+              >
+                ✖️ Cancelar
               </button>
             </div>
           </div>
@@ -7131,10 +8004,10 @@ function ReservasContent({ operadorAutenticado }) {
         central: false,
         coorporativo: false,
         llegue: false,
-        puerto: '3019',
+        puerto: '3005',
         randon: clave,
         rango: reserva.coordenadas ? '1' : '0',
-        viajes: unidad,
+        viajes: '', // Se actualizará con el valor del campo valor
         tarifaSeleccionada: true,
         modoSeleccion: 'manual',
         modoAsignacion: 'manual',
@@ -8893,8 +9766,8 @@ function ReportesContent() {
           
           // Cargar desde pedidosDisponibles1 como respaldo
           try {
-            const pedidosDisponiblesRef = collection(db, 'pedidosDisponibles1');
-            const pedidosSnapshot = await getDocs(pedidosDisponiblesRef);
+            const pedidosDisponibles1Ref = collection(db, 'pedidosDisponibles1');
+            const pedidosSnapshot = await getDocs(pedidosDisponibles1Ref);
             
             pedidosSnapshot.forEach((doc) => {
               const viaje = doc.data();
