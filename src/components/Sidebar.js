@@ -6,11 +6,9 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
     { id: 'conductores', label: 'Conductores', icon: '👨‍💼' },
     { id: 'reportes', label: 'Reportes', icon: '📈' },
     { id: 'operadores', label: 'Operadores', icon: '👥' },
-    { id: 'reservas', label: 'Reservas', icon: '📅' },
-    { id: 'vouchers', label: 'Vouchers', icon: '🧾' },
     { id: 'whatsapp1', label: 'Whatsapp1', icon: '💬' },
-    { id: 'whatsapptops', label: 'WhatsappTops', icon: '💬' },
-    { id: 'whatsappunidades', label: 'WhatsappUnidades', icon: '💬' }
+    { id: 'whatsapp2', label: 'Whatsapp2', icon: '💬' },
+    { id: 'whatsapp3', label: 'Whatsapp3', icon: '💬' }
   ];
 
   return (
@@ -38,7 +36,7 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
             fontWeight: 'bold',
             color: '#f9fafb'
           }}>
-            SYSTEMTAXI
+            Turismo
           </h2>
         )}
         <button
@@ -66,9 +64,9 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
               // Si es una opción de WhatsApp, abrir en nueva ventana con URL específica
               if (item.id === 'whatsapp1') {
                 window.open('http://37.60.227.239:3005/', '_blank');
-              } else if (item.id === 'whatsapptops') {
+              } else if (item.id === 'whatsapp2') {
                 window.open('http://37.60.227.239:3006/', '_blank');
-              } else if (item.id === 'whatsappunidades') {
+              } else if (item.id === 'whatsapp3') {
                 window.open('http://37.60.227.239:3022/', '_blank');
               } else {
                 setActiveSection(item.id);
