@@ -568,7 +568,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   const [coordenadas, setCoordenadas] = useState('');
   const [direccion, setDireccion] = useState('');
   const [sector, setSector] = useState('');
-  const [base, setBase] = useState('0');
+  const [base, setBase] = useState('');
   const [busquedaPorIdCliente, setBusquedaPorIdCliente] = useState(false);
   const [telefonoCompletoCliente, setTelefonoCompletoCliente] = useState('');
   const [tiempo, setTiempo] = useState('');
@@ -4793,17 +4793,35 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                  value={base}
                  onChange={(e) => {
                    const valor = e.target.value;
-                   // Solo permitir 01, 02, 03 (máximo 2 dígitos)
-                   if (valor === '' || valor === '0' || valor === '01' || valor === '02' || valor === '03') {
+                   console.log('🔍 Campo Base - Valor:', valor, 'Longitud:', valor.length);
+                   
+                   // Permitir solo números del 1-13 (1, 2, 3, ..., 13)
+                   // Validar que esté vacío, sea un solo dígito del 1-9, o sea 10, 11, 12, o 13
+                   if (valor === '' || valor === '1' || valor === '2' || valor === '3' || valor === '4' || valor === '5' || valor === '6' || valor === '7' || valor === '8' || valor === '9' || valor === '10' || valor === '11' || valor === '12' || valor === '13') {
                      setBase(valor);
-                     // Si se completaron 2 dígitos, saltar al campo tiempo
+                     
+                     // Si se completan 2 dígitos, saltar al campo tiempo
                      if (valor.length === 2) {
+                       console.log('🚀 Base: Saltando al campo tiempo en 50ms');
                        setTimeout(() => {
                          if (tiempoInputRef.current) {
                            tiempoInputRef.current.focus();
-                           console.log('🎯 Saltando automáticamente al campo tiempo');
+                           console.log('✅ Base: Enfocado campo tiempo');
+                         } else {
+                           console.log('❌ Base: tiempoInputRef.current es null');
                          }
                        }, 50);
+                     }
+                   } else {
+                     console.log('❌ Base: Valor no válido (solo números del 1-13):', valor);
+                   }
+                 }}
+                 onKeyDown={(e) => {
+                   // Navegación con flechas del teclado
+                   if (e.key === 'ArrowRight' || e.key === 'Tab') {
+                     e.preventDefault();
+                     if (tiempoInputRef.current) {
+                       tiempoInputRef.current.focus();
                      }
                    }
                  }}
@@ -4824,17 +4842,37 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                  value={tiempo}
                  onChange={(e) => {
                    const valor = e.target.value;
+                   console.log('🔍 Campo Tiempo - Valor:', valor, 'Longitud:', valor.length);
                    // Solo permitir números y máximo 2 dígitos
                    if (/^\d{0,2}$/.test(valor)) {
                      setTiempo(valor);
                      // Si se completaron 2 dígitos, saltar al campo unidad
                      if (valor.length === 2) {
+                       console.log('🚀 Tiempo: Saltando al campo unidad en 50ms');
                        setTimeout(() => {
                          if (unidadInputRef.current) {
                            unidadInputRef.current.focus();
-                           console.log('🎯 Saltando automáticamente al campo unidad');
+                           console.log('✅ Tiempo: Enfocado campo unidad');
+                         } else {
+                           console.log('❌ Tiempo: unidadInputRef.current es null');
                          }
                        }, 50);
+                     }
+                   } else {
+                     console.log('❌ Tiempo: Valor no válido (solo números):', valor);
+                   }
+                 }}
+                 onKeyDown={(e) => {
+                   // Navegación con flechas del teclado
+                   if (e.key === 'ArrowLeft') {
+                     e.preventDefault();
+                     if (baseInputRef.current) {
+                       baseInputRef.current.focus();
+                     }
+                   } else if (e.key === 'ArrowRight' || e.key === 'Tab') {
+                     e.preventDefault();
+                     if (unidadInputRef.current) {
+                       unidadInputRef.current.focus();
                      }
                    }
                  }}
@@ -4853,8 +4891,29 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   type="text"
                   placeholder="Unidad"
                   value={unidad}
-                  onChange={(e) => setUnidad(e.target.value)}
-                  onKeyPress={(e) => {
+                  onChange={(e) => {
+                    const valor = e.target.value;
+                    setUnidad(valor);
+                    // Si se completan 3 dígitos, ejecutar la acción correspondiente
+                    if (valor.length === 3) {
+                      setTimeout(() => {
+                        if (tiempo.trim() && unidad.trim()) {
+                          handleInsertarViaje();
+                        } else {
+                          handleInsertarViajePendiente();
+                        }
+                      }, 50);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    // Navegación con flechas del teclado
+                    if (e.key === 'ArrowLeft') {
+                      e.preventDefault();
+                      if (tiempoInputRef.current) {
+                        tiempoInputRef.current.focus();
+                      }
+                    }
+                    // Enter para ejecutar acción
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       e.stopPropagation(); // Prevenir que el evento llegue al formulario
@@ -5557,21 +5616,57 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                  </tr>
                </thead>
               <tbody>
-                {viajesAsignados.map((viaje, index) => (
-                  <tr
-                    key={viaje.id}
-                    style={{
-                      borderBottom: '1px solid #f1f5f9',
-                      background: index % 2 === 0 ? '#fff' : '#fafbff',
-                      transition: 'background 0.2s ease'
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.background = '#f0f9ff';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.background = index % 2 === 0 ? '#fff' : '#fafbff';
-                                         }}
-                   >
+                {viajesAsignados.map((viaje, index) => {
+                  // Determinar el tipo de pedido basado en sus características
+                  const tieneDireccionesCliente = viaje.direccionesCliente && Array.isArray(viaje.direccionesCliente) && viaje.direccionesCliente.length > 0;
+                  const tieneTipoPedido = viaje.tipoPedido && viaje.tipoPedido !== '';
+                  
+                  // Determinar el tipo de pedido
+                  let tipoPedido = 'basico'; // Por defecto
+                  if (tieneDireccionesCliente) {
+                    tipoPedido = 'conDirecciones';
+                  } else if (tieneTipoPedido) {
+                    tipoPedido = 'conTipoPedido';
+                  } else {
+                    tipoPedido = 'basico'; // Sin direccionesCliente ni tipoPedido
+                  }
+                  
+                  // Colores de fondo basados en el tipo de pedido - MÁS INTENSOS
+                  let colorFondoBase, colorFondoHover, colorBorde;
+                  
+                  if (tipoPedido === 'conDirecciones') {
+                    // Verde para pedidos con direccionesCliente
+                    colorFondoBase = '#dcfce7';
+                    colorFondoHover = '#bbf7d0';
+                    colorBorde = '#86efac';
+                  } else if (tipoPedido === 'conTipoPedido') {
+                    // Rojo para pedidos con tipoPedido
+                    colorFondoBase = '#fee2e2';
+                    colorFondoHover = '#fecaca';
+                    colorBorde = '#f87171';
+                  } else {
+                    // Amarillo para pedidos básicos (sin direccionesCliente ni tipoPedido)
+                    colorFondoBase = '#fef3c7';
+                    colorFondoHover = '#fde68a';
+                    colorBorde = '#f59e0b';
+                  }
+                  
+                  return (
+                    <tr
+                      key={viaje.id}
+                      style={{
+                        borderBottom: '1px solid #f1f5f9',
+                        borderLeft: `4px solid ${colorBorde}`,
+                        background: colorFondoBase,
+                        transition: 'background 0.2s ease'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.background = colorFondoHover;
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.background = colorFondoBase;
+                      }}
+                    >
                      <td style={{
                        padding: '12px 8px',
                        fontWeight: 'bold',
@@ -5835,8 +5930,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                            value={editandoViaje === viaje.id ? baseEdit : ''}
                            onChange={(e) => {
                              const valor = e.target.value;
-                             // Solo permitir 01, 02, 03 (máximo 2 dígitos)
-                             if (valor === '' || valor === '0' || valor === '01' || valor === '02' || valor === '03') {
+                             // Permitir números del 1-13 (1, 2, 3, ..., 13)
+                             if (valor === '' || valor === '1' || valor === '2' || valor === '3' || valor === '4' || valor === '5' || valor === '6' || valor === '7' || valor === '8' || valor === '9' || valor === '10' || valor === '11' || valor === '12' || valor === '13') {
                                if (editandoViaje !== viaje.id) {
                                  iniciarEdicionViaje(viaje);
                                }
@@ -5980,19 +6075,25 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                               fontSize: 12,
                               fontWeight: 'bold',
                               cursor: 'pointer',
-                              background: '#dc2626',
+                              background: tipoPedido === 'conDirecciones' ? '#16a34a' : 
+                                         tipoPedido === 'conTipoPedido' ? '#dc2626' : 
+                                         '#d97706', // Verde intenso, rojo intenso, o naranja intenso
                               color: 'white',
                               transition: 'all 0.2s ease'
                             }}
                             onMouseEnter={(e) => {
                               e.target.style.transform = 'scale(1.05)';
                               e.target.style.boxShadow = '0 4px 8px rgba(0,0,0,0.2)';
-                              e.target.style.background = '#b91c1c';
+                              e.target.style.background = tipoPedido === 'conDirecciones' ? '#15803d' : 
+                                                         tipoPedido === 'conTipoPedido' ? '#b91c1c' : 
+                                                         '#b45309'; // Verde más intenso, rojo más intenso, o naranja más intenso
                             }}
                             onMouseLeave={(e) => {
                               e.target.style.transform = 'scale(1)';
                               e.target.style.boxShadow = 'none';
-                              e.target.style.background = '#dc2626';
+                              e.target.style.background = tipoPedido === 'conDirecciones' ? '#16a34a' : 
+                                                         tipoPedido === 'conTipoPedido' ? '#dc2626' : 
+                                                         '#d97706'; // Verde intenso, rojo intenso, o naranja intenso
                             }}
                           >
                             Cancelar
@@ -6000,7 +6101,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                         )}
                       </td>
                    </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
