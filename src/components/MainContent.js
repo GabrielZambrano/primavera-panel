@@ -7,6 +7,34 @@ import * as XLSX from 'xlsx';
 
 // import axios from 'axios'; // Comentado porque no se usa
 
+// Función para obtener y reservar el siguiente número de autorización (solo para vouchers completos)
+const obtenerSiguienteAutorizacion = async () => {
+  try {
+    // Obtener el contador actual de autorizacionSecuencia
+    const secuenciaRef = doc(db, 'autorizacionSecuencia', 'contador');
+    const secuenciaDoc = await getDoc(secuenciaRef);
+    
+    let siguienteNumero = 200; // Número inicial según tu requerimiento
+    
+    if (secuenciaDoc.exists()) {
+      const data = secuenciaDoc.data();
+      siguienteNumero = (data.numero || 199) + 1;
+    }
+
+    // Actualizar el contador en autorizacionSecuencia
+    await setDoc(secuenciaRef, {
+      numero: siguienteNumero,
+      ultimaActualizacion: new Date()
+    }, { merge: true });
+
+    console.log('✅ Autorización generada y contador actualizado:', siguienteNumero);
+    return siguienteNumero;
+  } catch (error) {
+    console.error('Error al obtener siguiente autorización:', error);
+    return 200;
+  }
+};
+
 /**
  * Funcionalidad de tokens de conductores:
  * - Cuando se asigna manualmente una unidad/conductor, se incluye el token FCM del conductor
@@ -369,33 +397,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
   
 
-  // Función para obtener y reservar el siguiente número de autorización (solo para vouchers completos)
-  const obtenerSiguienteAutorizacion = async () => {
-    try {
-      // Obtener el contador actual de autorizacionSecuencia
-      const secuenciaRef = doc(db, 'autorizacionSecuencia', 'contador');
-      const secuenciaDoc = await getDoc(secuenciaRef);
-      
-      let siguienteNumero = 200; // Número inicial según tu requerimiento
-      
-      if (secuenciaDoc.exists()) {
-        const data = secuenciaDoc.data();
-        siguienteNumero = (data.numero || 199) + 1;
-      }
-
-      // Actualizar el contador en autorizacionSecuencia
-      await setDoc(secuenciaRef, {
-        numero: siguienteNumero,
-        ultimaActualizacion: new Date()
-      }, { merge: true });
-
-      console.log('✅ Autorización generada y contador actualizado:', siguienteNumero);
-      return siguienteNumero;
-    } catch (error) {
-      console.error('Error al obtener siguiente autorización:', error);
-      return 200;
-    }
-  };
 
   // Función para autenticar operador
   const autenticarOperador = async () => {
@@ -934,6 +935,12 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
       const fechaReserva = new Date(modalReserva.fechaHora);
 
+      // Calcular autorización antes de crear el objeto
+      let autorizacion = null;
+      if (tipoEmpresa && tipoEmpresa !== 'Efectivo') {
+        autorizacion = await obtenerSiguienteAutorizacion();
+      }
+
       const reservaData = {
         telefono: modalReserva.datosCliente.telefono || '',
         telefonoCompleto: telefonoCompleto || modalReserva.datosCliente.telefono || '',
@@ -948,7 +955,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         createdAt: new Date(),
         // Información de empresa y autorización (si aplica)
         tipoEmpresa: tipoEmpresa || 'Efectivo',
-        autorizacion: tipoEmpresa && tipoEmpresa !== 'Efectivo' ? await obtenerSiguienteAutorizacion() : null,
+        autorizacion: autorizacion,
         operador: operadorAutenticado ? {
           id: operadorAutenticado.id || '',
           nombre: operadorAutenticado.nombre || '',
@@ -2435,6 +2442,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          }
        }
        
+       // Calcular autorización antes de crear el objeto
+       let autorizacion = null;
+       if (preRegistroVoucher?.activo) {
+         autorizacion = preRegistroVoucher.numeroAutorizacion;
+       } else if (tipoEmpresa !== 'Efectivo') {
+         autorizacion = await obtenerSiguienteAutorizacion();
+       }
+       
        const pedidoData = {
          // Estructura basada en tu colección pedidosDisponibles1
          clave: clave,
@@ -2467,8 +2482,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          tarifaSeleccionada: true,
          operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
          // Campo de autorización (pre-generado opcionalmente desde el botón de voucher o automáticamente para empresas)
-         autorizacion: preRegistroVoucher?.activo ? preRegistroVoucher.numeroAutorizacion : 
-                      (tipoEmpresa !== 'Efectivo' ? await obtenerSiguienteAutorizacion() : null),
+         autorizacion: autorizacion,
          modoSeleccion: modoSeleccionUI, // Nuevo campo para el modo de selección UI
          tipoEmpresa: tipoEmpresa // Nuevo campo para empresa/efectivo
        };
@@ -2515,8 +2529,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          setTipoEmpresa('Efectivo');
        }
      } catch (error) {
-       console.error('Error al registrar el pedido:', error);
-       setModal({ open: true, success: false, message: 'Error al registrar el pedido.' });
+       console.error('❌ Error al registrar el pedido:', error);
+       console.error('❌ Detalles del error:', error.message);
+       console.error('❌ Stack trace:', error.stack);
+       setModal({ open: true, success: false, message: `Error al registrar el pedido: ${error.message}` });
      } finally {
        setInsertandoRegistro(false);
      }
@@ -2585,6 +2601,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        const coordenadasFinales = coordenadas || coordenadasPorDefecto;
        const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
        
+       // Asegurar que latitud y longitud no sean undefined
+       const latitudFinal = latitud || '-0.2298500';
+       const longitudFinal = longitud || '-78.5249500';
+       
        const fecha = new Date(); // Timestamp
        const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
        
@@ -2619,6 +2639,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          }
        }
        
+       // Calcular autorización antes de crear el objeto
+       let autorizacion = null;
+       if (preRegistroVoucher?.activo) {
+         autorizacion = preRegistroVoucher.numeroAutorizacion;
+       } else if (tipoEmpresa !== 'Efectivo') {
+         autorizacion = await obtenerSiguienteAutorizacion();
+       }
+       
        const pedidoEnCursoData = {
          // Estructura para pedidoEnCurso
          clave: clave,
@@ -2651,8 +2679,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          latitudConductor: '',
          longitudConductor: '',
          // Datos adicionales
-         latitud: latitud,
-         longitud: longitud,
+         latitud: latitudFinal,
+         longitud: longitudFinal,
          latitudDestino: '',
          longitudDestino: '',
          sector: direccion || '',
@@ -2671,8 +2699,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         tipoEmpresa: tipoEmpresa, // Nuevo campo para empresa/efectivo
         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
         // Campo de autorización (pre-generado opcionalmente desde el botón de voucher o automáticamente para empresas)
-        autorizacion: preRegistroVoucher?.activo ? preRegistroVoucher.numeroAutorizacion : 
-                     (tipoEmpresa !== 'Efectivo' ? await obtenerSiguienteAutorizacion() : null)
+        autorizacion: autorizacion
        };
 
        // Guardar directamente en la colección "pedidoEnCurso"
@@ -2744,8 +2771,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          setTipoEmpresa('Efectivo');
        }
     } catch (error) {
-      console.error('Error al registrar el viaje:', error);
-      setModal({ open: true, success: false, message: 'Error al registrar el pedido en curso.' });
+      console.error('❌ Error al registrar el viaje:', error);
+      console.error('❌ Detalles del error:', error.message);
+      console.error('❌ Stack trace:', error.stack);
+      setModal({ open: true, success: false, message: `Error al registrar el pedido en curso: ${error.message}` });
     } finally {
       setInsertandoRegistro(false);
     }
@@ -4795,9 +4824,15 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                    const valor = e.target.value;
                    console.log('🔍 Campo Base - Valor:', valor, 'Longitud:', valor.length);
                    
-                   // Permitir solo números del 1-13 (1, 2, 3, ..., 13)
-                   // Validar que esté vacío, sea un solo dígito del 1-9, o sea 10, 11, 12, o 13
-                   if (valor === '' || valor === '1' || valor === '2' || valor === '3' || valor === '4' || valor === '5' || valor === '6' || valor === '7' || valor === '8' || valor === '9' || valor === '10' || valor === '11' || valor === '12' || valor === '13') {
+                   // Permitir números del 01-13 con formato de dos dígitos
+                   // Validar que esté vacío, sea un solo dígito del 0-9, o sea 01-13 con dos dígitos
+                   if (valor === '' || 
+                       valor === '01' || valor === '02' || valor === '03' || valor === '04' || valor === '05' || 
+                       valor === '06' || valor === '07' || valor === '08' || valor === '09' || 
+                       valor === '10' || valor === '11' || valor === '12' || valor === '13' ||
+                       // Permitir escritura progresiva (0, 1, 2, etc.)
+                       valor === '0' || valor === '1' || valor === '2' || valor === '3' || valor === '4' || 
+                       valor === '5' || valor === '6' || valor === '7' || valor === '8' || valor === '9') {
                      setBase(valor);
                      
                      // Si se completan 2 dígitos, saltar al campo tiempo
@@ -4894,16 +4929,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   onChange={(e) => {
                     const valor = e.target.value;
                     setUnidad(valor);
-                    // Si se completan 3 dígitos, ejecutar la acción correspondiente
-                    if (valor.length === 3) {
-                      setTimeout(() => {
-                        if (tiempo.trim() && unidad.trim()) {
-                          handleInsertarViaje();
-                        } else {
-                          handleInsertarViajePendiente();
-                        }
-                      }, 50);
-                    }
+                    // Solo actualizar el valor, no ejecutar automáticamente
                   }}
                   onKeyDown={(e) => {
                     // Navegación con flechas del teclado
@@ -5930,8 +5956,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                            value={editandoViaje === viaje.id ? baseEdit : ''}
                            onChange={(e) => {
                              const valor = e.target.value;
-                             // Permitir números del 1-13 (1, 2, 3, ..., 13)
-                             if (valor === '' || valor === '1' || valor === '2' || valor === '3' || valor === '4' || valor === '5' || valor === '6' || valor === '7' || valor === '8' || valor === '9' || valor === '10' || valor === '11' || valor === '12' || valor === '13') {
+                             // Permitir números del 01-13 con formato de dos dígitos
+                             if (valor === '' || 
+                                 valor === '01' || valor === '02' || valor === '03' || valor === '04' || valor === '05' || 
+                                 valor === '06' || valor === '07' || valor === '08' || valor === '09' || 
+                                 valor === '10' || valor === '11' || valor === '12' || valor === '13' ||
+                                 // Permitir escritura progresiva (0, 1, 2, etc.)
+                                 valor === '0' || valor === '1' || valor === '2' || valor === '3' || valor === '4' || 
+                                 valor === '5' || valor === '6' || valor === '7' || valor === '8' || valor === '9') {
                                if (editandoViaje !== viaje.id) {
                                  iniciarEdicionViaje(viaje);
                                }
@@ -8012,34 +8044,6 @@ function ReservasContent({ operadorAutenticado }) {
 
   const validarTokenConductor = (token) => token && String(token).trim().length >= 100;
 
-  // Función para obtener y reservar el siguiente número de autorización
-  const obtenerSiguienteAutorizacion = async () => {
-    try {
-      // Obtener el contador actual de autorizacionSecuencia
-      const secuenciaRef = doc(db, 'autorizacionSecuencia', 'contador');
-      const secuenciaDoc = await getDoc(secuenciaRef);
-      
-      let siguienteNumero = 200; // Número inicial según tu requerimiento
-      
-      if (secuenciaDoc.exists()) {
-        const data = secuenciaDoc.data();
-        siguienteNumero = (data.numero || 199) + 1;
-      }
-
-      // Actualizar el contador en autorizacionSecuencia
-      await setDoc(secuenciaRef, {
-        numero: siguienteNumero,
-        ultimaActualizacion: new Date()
-      }, { merge: true });
-
-      console.log('✅ Autorización generada y contador actualizado:', siguienteNumero);
-      return siguienteNumero;
-    } catch (error) {
-      console.error('Error al obtener siguiente autorización:', error);
-      return 200;
-    }
-  };
-
   const asignarUnidad = async (reserva) => {
     try {
       const unidad = (unidadAsignar[reserva.id] || '').trim();
@@ -8067,6 +8071,12 @@ function ReservasContent({ operadorAutenticado }) {
       const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
       const fecha = reserva.fechaHoraReserva || new Date(); // Usar la fecha de la reserva original
       const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
+
+      // Calcular autorización antes de crear el objeto
+      let autorizacion = reserva.autorizacion || null;
+      if (!autorizacion && reserva.tipoEmpresa && reserva.tipoEmpresa !== 'Efectivo') {
+        autorizacion = await obtenerSiguienteAutorizacion();
+      }
 
       const pedidoEnCursoData = {
         clave,
@@ -8120,7 +8130,7 @@ function ReservasContent({ operadorAutenticado }) {
         fechaHoraReserva: reserva.fechaHoraReserva, // Preservar la fecha/hora original de la reserva
         // Información de empresa y autorización preservada de la reserva
         tipoEmpresa: reserva.tipoEmpresa || 'Efectivo',
-        autorizacion: reserva.autorizacion || (reserva.tipoEmpresa !== 'Efectivo' ? await obtenerSiguienteAutorizacion() : null),
+        autorizacion: autorizacion,
       };
 
       const docRef = await addDoc(collection(db, 'pedidoEnCurso'), pedidoEnCursoData);
@@ -12267,6 +12277,51 @@ function MainContent({ activeSection, operadorAutenticado, setOperadorAutenticad
         return <VouchersContent operadorAutenticado={operadorAutenticado} />;
       case 'reservas':
         return <ReservasContent operadorAutenticado={operadorAutenticado} />;
+      case 'whatsapp1':
+        return (
+          <div style={{ width: '100%', height: '100vh', border: 'none' }}>
+            <iframe
+              src="http://37.60.227.239:3005/"
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                borderRadius: '8px'
+              }}
+              title="WhatsApp 1"
+            />
+          </div>
+        );
+      case 'whatsapp2':
+        return (
+          <div style={{ width: '100%', height: '100vh', border: 'none' }}>
+            <iframe
+              src="http://37.60.227.239:3006/"
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                borderRadius: '8px'
+              }}
+              title="WhatsApp 2"
+            />
+          </div>
+        );
+      case 'whatsapp3':
+        return (
+          <div style={{ width: '100%', height: '100vh', border: 'none' }}>
+            <iframe
+              src="http://37.60.227.239:3022/"
+              style={{
+                width: '100%',
+                height: '100%',
+                border: 'none',
+                borderRadius: '8px'
+              }}
+              title="WhatsApp 3"
+            />
+          </div>
+        );
       default:
         return <TaxiForm 
           operadorAutenticado={operadorAutenticado}

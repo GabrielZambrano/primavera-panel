@@ -61,16 +61,8 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
           <div
             key={item.id}
             onClick={() => {
-              // Si es una opción de WhatsApp, abrir en nueva ventana con URL específica
-              if (item.id === 'whatsapp1') {
-                window.open('http://37.60.227.239:3005/', '_blank');
-              } else if (item.id === 'whatsapp2') {
-                window.open('http://37.60.227.239:3006/', '_blank');
-              } else if (item.id === 'whatsapp3') {
-                window.open('http://37.60.227.239:3022/', '_blank');
-              } else {
-                setActiveSection(item.id);
-              }
+              // Cambiar a la sección correspondiente dentro del mismo sistema
+              setActiveSection(item.id);
             }}
             style={{
               padding: '15px 20px',
