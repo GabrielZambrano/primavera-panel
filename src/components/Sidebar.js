@@ -36,7 +36,7 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
             fontWeight: 'bold',
             color: '#f9fafb'
           }}>
-            Turismo
+            Taxi Turismo
           </h2>
         )}
         <button
