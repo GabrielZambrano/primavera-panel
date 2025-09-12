@@ -1563,22 +1563,39 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           console.log('❌ Cliente no encontrado, mostrando modal de registro');
           setDireccionesGuardadas([]);
           setDireccionSeleccionada(null);
+          // Determinar automáticamente el tipo de cliente basándose en la cantidad de dígitos
+          let tipoClienteAuto = 'cliente';
+          let coleccionAuto = 'clientes';
+          
+          if (telefono.length <= 7) {
+            tipoClienteAuto = 'cliente';
+            coleccionAuto = 'clientes';
+          } else if (telefono.length > 9) {
+            tipoClienteAuto = 'cliente telefono';
+            coleccionAuto = 'clientestelefonos';
+          } else {
+            // Para 8-9 dígitos, usar la lógica anterior como fallback
+            tipoClienteAuto = resultadoBusqueda ? resultadoBusqueda.tipoCliente : 'cliente';
+            coleccionAuto = resultadoBusqueda ? resultadoBusqueda.coleccion : 'clientes';
+          }
+          
           setModalRegistroCliente({
             open: true,
-            tipoCliente: resultadoBusqueda ? resultadoBusqueda.tipoCliente : 'cliente',
-            coleccion: resultadoBusqueda ? resultadoBusqueda.coleccion : 'clientes',
+            tipoCliente: tipoClienteAuto,
+            coleccion: coleccionAuto,
             modoAplicacion: modoSeleccion === 'aplicacion',
             datosCliente: { 
               nombre: '', 
               direccion: '', 
               coordenadas: '', 
-              sector: ''
+              sector: '',
+              telefono: telefono
             }
           });
           console.log('📝 Modal de registro configurado:', {
             open: true,
-            tipoCliente: resultadoBusqueda ? resultadoBusqueda.tipoCliente : 'cliente',
-            coleccion: resultadoBusqueda ? resultadoBusqueda.coleccion : 'clientes',
+            tipoCliente: tipoClienteAuto,
+            coleccion: coleccionAuto,
             modoAplicacion: modoSeleccion === 'aplicacion'
           });
         }
@@ -2017,16 +2034,29 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   const registrarNuevoCliente = async (datosCliente, tipoCliente, modoAplicacion) => {
     try {
       let coleccionNombre = '';
+      const telefono = datosCliente.telefono || telefono; // Usar el teléfono del modal o el actual
       
-      // Determinar la colección según el tipo de cliente
-      if (tipoCliente === 'cliente') {
+      // Determinar la colección automáticamente basándose en la cantidad de dígitos
+      if (telefono.length <= 7) {
+        // 7 dígitos o menos: colección 'clientes' (números fijos)
         coleccionNombre = 'clientes';
-      } else if (tipoCliente === 'cliente telefono') {
+        console.log('📞 Registrando en colección "clientes" (número fijo de 7 dígitos o menos)');
+      } else if (telefono.length > 9) {
+        // Más de 9 dígitos: colección 'clientestelefonos' (números móviles)
         coleccionNombre = 'clientestelefonos';
-      } else if (tipoCliente === 'cliente fijo') {
-        coleccionNombre = 'clientes fijos';
+        console.log('📱 Registrando en colección "clientestelefonos" (número móvil de más de 9 dígitos)');
       } else {
-        throw new Error('Tipo de cliente no válido');
+        // 8-9 dígitos: usar la lógica anterior como fallback
+        if (tipoCliente === 'cliente') {
+          coleccionNombre = 'clientes';
+        } else if (tipoCliente === 'cliente telefono') {
+          coleccionNombre = 'clientestelefonos';
+        } else if (tipoCliente === 'cliente fijo') {
+          coleccionNombre = 'clientes fijos';
+        } else {
+          throw new Error('Tipo de cliente no válido para números de 8-9 dígitos');
+        }
+        console.log(`📞 Registrando en colección "${coleccionNombre}" (fallback para ${telefono.length} dígitos)`);
       }
 
       // Crear array de direcciones
@@ -2060,7 +2090,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
       // Crear el documento del cliente usando el teléfono como ID
       let telefonoId = telefono;
-      if (tipoCliente === 'cliente telefono') {
+      let tipoClienteFinal = tipoCliente;
+      
+      // Determinar el tipo de cliente basándose en la colección seleccionada
+      if (coleccionNombre === 'clientes') {
+        tipoClienteFinal = 'cliente';
+      } else if (coleccionNombre === 'clientestelefonos') {
+        tipoClienteFinal = 'cliente telefono';
         // Para celulares, usar el telefonoCompleto como ID (sin el cero inicial)
         telefonoId = concatenarTelefonoWhatsApp(telefono, datosCliente.prefijo || 'Ecuador');
         console.log('📱 Usando telefonoCompleto como ID:', telefonoId);
@@ -2096,14 +2132,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       setModal({ 
         open: true, 
         success: true, 
-        message: `${tipoCliente} registrado exitosamente en la colección ${coleccionNombre}` 
+        message: `${tipoClienteFinal} registrado exitosamente en la colección ${coleccionNombre}` 
       });
     } catch (error) {
       console.error('Error al registrar cliente:', error);
       setModal({ 
         open: true, 
         success: false, 
-        message: `Error al registrar ${tipoCliente}. Intente nuevamente.` 
+        message: `Error al registrar ${tipoClienteFinal}. Intente nuevamente.` 
       });
     }
   };
