@@ -4432,7 +4432,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       </div>
     );
   }
-     return (
+
+  return (
      <div style={{
        background: '#f3f4f6',
        padding: '20px',
