@@ -12278,51 +12278,8 @@ function MainContent({ activeSection, operadorAutenticado, setOperadorAutenticad
         return <VouchersContent operadorAutenticado={operadorAutenticado} />;
       case 'reservas':
         return <ReservasContent operadorAutenticado={operadorAutenticado} />;
-      case 'whatsapp1':
-        return (
-          <div style={{ width: '100%', height: '100vh', border: 'none' }}>
-            <iframe
-              src="http://37.60.227.239:3005/"
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                borderRadius: '8px'
-              }}
-              title="WhatsApp 1"
-            />
-          </div>
-        );
-      case 'whatsapp2':
-        return (
-          <div style={{ width: '100%', height: '100vh', border: 'none' }}>
-            <iframe
-              src="http://37.60.227.239:3006/"
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                borderRadius: '8px'
-              }}
-              title="WhatsApp 2"
-            />
-          </div>
-        );
-      case 'whatsapp3':
-        return (
-          <div style={{ width: '100%', height: '100vh', border: 'none' }}>
-            <iframe
-              src="http://37.60.227.239:3022/"
-              style={{
-                width: '100%',
-                height: '100%',
-                border: 'none',
-                borderRadius: '8px'
-              }}
-              title="WhatsApp 3"
-            />
-          </div>
-        );
+      // Las opciones de WhatsApp ahora se abren en ventanas nuevas
+      // para evitar problemas de SSL
       default:
         return <TaxiForm 
           operadorAutenticado={operadorAutenticado}
