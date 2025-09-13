@@ -914,14 +914,14 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       if (telRaw.length >= 9 && telRaw.length <= 10) {
         try {
           const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telRaw, 'Ecuador');
-          let clienteRef = doc(db, 'clientestelefonos', telefonoCompletoBusqueda);
+          let clienteRef = doc(db, 'clientestelefonos1', telefonoCompletoBusqueda);
           let clienteSnap = await getDoc(clienteRef);
           if (clienteSnap.exists()) {
             const pref = clienteSnap.data().prefijo || 'Ecuador';
             telefonoCompleto = concatenarTelefonoWhatsApp(telRaw, pref);
           } else {
             const ult9 = telRaw.slice(-9);
-            clienteRef = doc(db, 'clientestelefonos', ult9);
+            clienteRef = doc(db, 'clientestelefonos1', ult9);
             clienteSnap = await getDoc(clienteRef);
             if (clienteSnap.exists()) {
               const pref = clienteSnap.data().prefijo || 'Ecuador';
@@ -1572,7 +1572,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             coleccionAuto = 'clientes';
           } else if (telefono.length > 9) {
             tipoClienteAuto = 'cliente telefono';
-            coleccionAuto = 'clientestelefonos';
+            coleccionAuto = 'clientestelefonos1';
           } else {
             // Para 8-9 dígitos, usar la lógica anterior como fallback
             tipoClienteAuto = resultadoBusqueda ? resultadoBusqueda.tipoCliente : 'cliente';
@@ -1855,7 +1855,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       if (telefono.length === 7) {
         coleccionNombre = 'clientes';
       } else if (telefono.length >= 9 && telefono.length <= 10) {
-        coleccionNombre = 'clientestelefonos';
+        coleccionNombre = 'clientestelefonos1';
       } else {
         console.log('❌ Tipo de teléfono no válido para editar historial');
         return;
@@ -1938,7 +1938,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       if (telefono.length === 7) {
         coleccionNombre = 'clientes';
       } else if (telefono.length >= 9 && telefono.length <= 10) {
-        coleccionNombre = 'clientestelefonos';
+        coleccionNombre = 'clientestelefonos1';
       } else {
         console.log('❌ Tipo de teléfono no válido para eliminar del historial');
         return;
@@ -2032,6 +2032,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
   // Nueva función para registrar clientes con direcciones mapeadas
   const registrarNuevoCliente = async (datosCliente, tipoCliente, modoAplicacion) => {
+    let tipoClienteFinal = tipoCliente; // Declarar fuera del try para usar en catch
     try {
       let coleccionNombre = '';
       const telefono = datosCliente.telefono || telefono; // Usar el teléfono del modal o el actual
@@ -2042,15 +2043,15 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         coleccionNombre = 'clientes';
         console.log('📞 Registrando en colección "clientes" (número fijo de 7 dígitos o menos)');
       } else if (telefono.length > 9) {
-        // Más de 9 dígitos: colección 'clientestelefonos' (números móviles)
-        coleccionNombre = 'clientestelefonos';
-        console.log('📱 Registrando en colección "clientestelefonos" (número móvil de más de 9 dígitos)');
+        // Más de 9 dígitos: colección 'clientestelefonos1' (números móviles)
+        coleccionNombre = 'clientestelefonos1';
+        console.log('📱 Registrando en colección "clientestelefonos1" (número móvil de más de 9 dígitos)');
       } else {
         // 8-9 dígitos: usar la lógica anterior como fallback
         if (tipoCliente === 'cliente') {
           coleccionNombre = 'clientes';
         } else if (tipoCliente === 'cliente telefono') {
-          coleccionNombre = 'clientestelefonos';
+          coleccionNombre = 'clientestelefonos1';
         } else if (tipoCliente === 'cliente fijo') {
           coleccionNombre = 'clientes fijos';
         } else {
@@ -2090,12 +2091,11 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
       // Crear el documento del cliente usando el teléfono como ID
       let telefonoId = telefono;
-      let tipoClienteFinal = tipoCliente;
       
       // Determinar el tipo de cliente basándose en la colección seleccionada
       if (coleccionNombre === 'clientes') {
         tipoClienteFinal = 'cliente';
-      } else if (coleccionNombre === 'clientestelefonos') {
+      } else if (coleccionNombre === 'clientestelefonos1') {
         tipoClienteFinal = 'cliente telefono';
         // Para celulares, usar el telefonoCompleto como ID (sin el cero inicial)
         telefonoId = concatenarTelefonoWhatsApp(telefono, datosCliente.prefijo || 'Ecuador');
@@ -2120,6 +2120,12 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         setCoordenadas(datosCliente.coordenadas);
       }
       
+      // Si es un número de celular (10+ dígitos) y tiene dirección, guardar en historial
+      if (telefono.length >= 10 && datosCliente.direccion && datosCliente.direccion.trim()) {
+        console.log('📱 Guardando dirección en historial para número de celular:', telefono);
+        await guardarEnHistorialCliente(telefono, datosCliente.direccion, datosCliente.coordenadas || '', 'manual');
+      }
+
       // Cerrar el modal de registro
       setModalRegistroCliente({ 
         open: false, 
@@ -2152,7 +2158,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       if (tipoCliente === 'cliente') {
         coleccionNombre = 'clientes';
       } else if (tipoCliente === 'cliente telefono') {
-        coleccionNombre = 'clientestelefonos';
+        coleccionNombre = 'clientestelefonos1';
       } else if (tipoCliente === 'cliente fijo') {
         coleccionNombre = 'clientes fijos';
       } else {
@@ -2271,7 +2277,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       if (telefono.length === 7) {
         coleccionNombre = 'clientes';
       } else if (telefono.length >= 9 && telefono.length <= 10) {
-        coleccionNombre = 'clientestelefonos';
+        coleccionNombre = 'clientestelefonos1';
       } else {
         console.log('❌ Tipo de teléfono no válido para actualizar coordenadas');
         return false;
@@ -2454,7 +2460,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          try {
            // Intentar primero con telefonoCompleto (Ecuador por defecto)
            const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
-           let clienteRef = doc(db, 'clientestelefonos', telefonoCompletoBusqueda);
+           let clienteRef = doc(db, 'clientestelefonos1', telefonoCompletoBusqueda);
            let clienteSnapshot = await getDoc(clienteRef);
            
            if (clienteSnapshot.exists()) {
@@ -2464,7 +2470,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
            } else {
              // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
              const telefonoBusqueda = telefono.slice(-9);
-             clienteRef = doc(db, 'clientestelefonos', telefonoBusqueda);
+             clienteRef = doc(db, 'clientestelefonos1', telefonoBusqueda);
              clienteSnapshot = await getDoc(clienteRef);
              
              if (clienteSnapshot.exists()) {
@@ -2651,7 +2657,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          try {
            // Intentar primero con telefonoCompleto (Ecuador por defecto)
            const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
-           let clienteRef = doc(db, 'clientestelefonos', telefonoCompletoBusqueda);
+           let clienteRef = doc(db, 'clientestelefonos1', telefonoCompletoBusqueda);
            let clienteSnapshot = await getDoc(clienteRef);
            
            if (clienteSnapshot.exists()) {
@@ -2661,7 +2667,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
            } else {
              // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
              const telefonoBusqueda = telefono.slice(-9);
-             clienteRef = doc(db, 'clientestelefonos', telefonoBusqueda);
+             clienteRef = doc(db, 'clientestelefonos1', telefonoBusqueda);
              clienteSnapshot = await getDoc(clienteRef);
              
              if (clienteSnapshot.exists()) {
@@ -4029,7 +4035,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         try {
           // Intentar primero con telefonoCompleto (Ecuador por defecto)
           const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
-          let clienteRef = doc(db, 'clientestelefonos', telefonoCompletoBusqueda);
+          let clienteRef = doc(db, 'clientestelefonos1', telefonoCompletoBusqueda);
           let clienteSnapshot = await getDoc(clienteRef);
           
           if (clienteSnapshot.exists()) {
@@ -4039,7 +4045,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           } else {
             // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
             const telefonoBusqueda = telefono.slice(-9);
-            clienteRef = doc(db, 'clientestelefonos', telefonoBusqueda);
+            clienteRef = doc(db, 'clientestelefonos1', telefonoBusqueda);
             clienteSnapshot = await getDoc(clienteRef);
             
             if (clienteSnapshot.exists()) {
@@ -4162,8 +4168,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       let coleccionNombre = '';
       if (telefono.length === 7) {
         coleccionNombre = 'clientes';
-      } else if (telefono.length >= 9 && telefono.length <= 10) {
-        coleccionNombre = 'clientestelefonos';
+      } else if (telefono.length >= 10) {
+        coleccionNombre = 'clientestelefonos1';
       } else {
         console.log('❌ Tipo de teléfono no válido para guardar historial');
         return false;
@@ -4174,24 +4180,12 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       let clienteRef;
       let clienteSnapshot;
 
-      if (telefono.length >= 9 && telefono.length <= 10) {
-        // Para celulares, intentar primero con telefonoCompleto (Ecuador por defecto)
-        const telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
-        console.log('📱 Intentando buscar cliente con telefonoCompleto:', telefonoCompleto);
-
-        clienteRef = doc(db, coleccionNombre, telefonoCompleto);
+      if (telefono.length >= 10) {
+        // Para celulares (10+ dígitos), usar el teléfono completo como ID
+        telefonoId = telefono;
+        console.log('📱 Buscando cliente con teléfono completo:', telefonoId);
+        clienteRef = doc(db, coleccionNombre, telefonoId);
         clienteSnapshot = await getDoc(clienteRef);
-
-        if (clienteSnapshot.exists()) {
-          telefonoId = telefonoCompleto;
-          console.log('✅ Cliente encontrado con telefonoCompleto como ID');
-        } else {
-          // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
-          telefonoId = telefono.slice(-9);
-          console.log('📱 Intentando con últimos 9 dígitos como fallback:', telefonoId);
-          clienteRef = doc(db, coleccionNombre, telefonoId);
-          clienteSnapshot = await getDoc(clienteRef);
-        }
       } else {
         // Para teléfonos de 7 dígitos, usar el teléfono original
         clienteRef = doc(db, coleccionNombre, telefonoId);
@@ -4266,16 +4260,22 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         return true;
       } else {
         // Agregar nueva dirección al historial solo si es realmente diferente
+        // Primero, desactivar todas las direcciones existentes
+        direccionesActuales.forEach(dir => {
+          dir.activa = false;
+        });
+
         const nuevaDireccionData = {
-            direccion: direccion,
+          direccion: direccion,
           coordenadas: coordenadasNormalizadas,
           fechaRegistro: new Date(),
-          activa: true,
-          modoRegistro: modoRegistro
+          activa: true, // La nueva dirección queda como principal
+          modoRegistro: modoRegistro,
+          sector: '' // Se puede agregar sector si está disponible
         };
 
         direccionesActuales.push(nuevaDireccionData);
-        console.log('📍 Nueva dirección agregada al historial:', nuevaDireccionData);
+        console.log('📍 Nueva dirección agregada al historial como principal:', nuevaDireccionData);
 
         // Actualizar el documento del cliente
         await updateDoc(clienteRef, {
@@ -4304,7 +4304,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       if (telefono.length === 7) {
         coleccionNombre = 'clientes';
       } else if (telefono.length >= 9 && telefono.length <= 10) {
-        coleccionNombre = 'clientestelefonos';
+        coleccionNombre = 'clientestelefonos1';
       } else {
         return;
       }
