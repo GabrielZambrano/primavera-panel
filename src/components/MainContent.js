@@ -2387,9 +2387,17 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     return `base ${numero}`;
   };
 
+  // Función para convertir número a texto de base (para pedidos disponibles - sin "aire")
+  const convertirNumeroABaseDisponible = (numero) => {
+    if (numero === '' || numero === null || numero === undefined) {
+      return ''; // Dejar vacío para texto libre
+    }
+    return numero; // Devolver el valor tal como está
+  };
+
   // Nueva función para limpiar solo tiempo y unidad, manteniendo datos del cliente
   const limpiarTiempoYUnidad = () => {
-    setBase('0');
+    setBase(''); // Dejar base vacío para texto libre
     setTiempo('');
     setUnidad('');
     setMapaVisible(false); // Oculta el mapa
@@ -2401,7 +2409,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     setNombre('');
     setCoordenadas('');
     setDireccion('');
-    setBase('0');
+    setBase(''); // Dejar base vacío para texto libre
     setTiempo('');
     setUnidad('');
     setUsuarioEncontrado(null);
@@ -2451,7 +2459,17 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        // Coordenadas por defecto si no hay coordenadas
        const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
        const coordenadasFinales = coordenadas || coordenadasPorDefecto;
-       const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
+       
+       // Asegurar que las coordenadas sean válidas antes de hacer split
+       let latitud, longitud;
+       if (coordenadasFinales && coordenadasFinales.includes(',')) {
+         const coords = coordenadasFinales.split(',').map(s => s.trim());
+         latitud = coords[0] || '-0.2298500';
+         longitud = coords[1] || '-78.5249500';
+       } else {
+         latitud = '-0.2298500';
+         longitud = '-78.5249500';
+       }
        
        // Determinar el teléfono completo para WhatsApp
        let telefonoCompleto = telefono || '';
@@ -2500,7 +2518,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          telefono: busquedaPorIdCliente ? telefono : (telefonoCompleto || telefono || ''), // Usar código original si se buscó por ID
          telefonoCompleto: busquedaPorIdCliente ? telefonoCompletoCliente : telefonoCompleto, // Usar teléfono completo del cliente si se buscó por ID
          direccion: direccion || '',
-         base: convertirNumeroABase(base || '0'), // Nuevo campo base
+         base: convertirNumeroABaseDisponible(base), // Nuevo campo base
          destino: '', // Se puede editar después
          fecha: fecha,
          estado: 'Disponible',
@@ -2641,7 +2659,17 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        // Coordenadas por defecto si no hay coordenadas
        const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
        const coordenadasFinales = coordenadas || coordenadasPorDefecto;
-       const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
+       
+       // Asegurar que las coordenadas sean válidas antes de hacer split
+       let latitud, longitud;
+       if (coordenadasFinales && coordenadasFinales.includes(',')) {
+         const coords = coordenadasFinales.split(',').map(s => s.trim());
+         latitud = coords[0] || '-0.2298500';
+         longitud = coords[1] || '-78.5249500';
+       } else {
+         latitud = '-0.2298500';
+         longitud = '-78.5249500';
+       }
        
        // Asegurar que latitud y longitud no sean undefined
        const latitudFinal = latitud || '-0.2298500';
@@ -3845,7 +3873,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     setEditandoViaje(viaje.id);
     setTiempoEdit(viaje.tiempo || '');
     setUnidadEdit(viaje.numeroUnidad || '');
-    setBaseEdit(viaje.base || '0');
+    setBaseEdit(viaje.base || '');
   };
 
    // Función para cancelar edición
@@ -3853,7 +3881,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     setEditandoViaje(null);
     setTiempoEdit('');
     setUnidadEdit('');
-    setBaseEdit('0');
+    setBaseEdit('');
   };
 
    // Función para mover pedido de disponibles a en curso
@@ -4024,7 +4052,18 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       // Coordenadas por defecto si no hay coordenadas
       const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
       const coordenadasFinales = coordenadas || coordenadasPorDefecto;
-      const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
+      
+      // Asegurar que las coordenadas sean válidas antes de hacer split
+      let latitud, longitud;
+      if (coordenadasFinales && coordenadasFinales.includes(',')) {
+        const coords = coordenadasFinales.split(',').map(s => s.trim());
+        latitud = coords[0] || '-0.2298500';
+        longitud = coords[1] || '-78.5249500';
+      } else {
+        latitud = '-0.2298500';
+        longitud = '-78.5249500';
+      }
+      
       const fecha = new Date(); // Timestamp
       const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
       
@@ -4068,7 +4107,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         telefono: busquedaPorIdCliente ? telefono : (telefonoCompleto || telefono || ''), // Usar código original si se buscó por ID
         telefonoCompleto: busquedaPorIdCliente ? telefonoCompletoCliente : telefonoCompleto, // Usar teléfono completo del cliente si se buscó por ID
         direccion: direccion || '',
-        base: convertirNumeroABase(base || '0'), // Nuevo campo base
+        base: convertirNumeroABaseDisponible(base || '0'), // Nuevo campo base
         destino: 'QUITO-ECUADOR',
         fecha: fecha, // Timestamp
         estado: 'Disponible',
@@ -4519,6 +4558,33 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                             telefono.length >= 7 && !usuarioEncontrado ? '#fee2e2' : 'white'
             }}
           />
+          
+          {/* Contador de dígitos del teléfono */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            minWidth: '50px',
+            height: '48px',
+            backgroundColor: telefono.length === 0 ? '#f3f4f6' :
+                           telefono.length <= 7 ? '#fbbf24' :
+                           telefono.length >= 10 ? '#34d399' : '#fbbf24',
+            border: `3px solid ${telefono.length === 0 ? '#9ca3af' :
+                               telefono.length <= 7 ? '#d97706' :
+                               telefono.length >= 10 ? '#059669' : '#d97706'}`,
+            borderRadius: 6,
+            fontSize: '18px',
+            fontWeight: '900',
+            color: telefono.length === 0 ? '#4b5563' :
+                   telefono.length <= 7 ? '#92400e' :
+                   telefono.length >= 10 ? '#064e3b' : '#92400e',
+            transition: 'all 0.3s ease',
+            boxShadow: telefono.length > 0 ? '0 4px 8px rgba(0,0,0,0.15)' : 'none',
+            textShadow: telefono.length > 0 ? '0 1px 2px rgba(0,0,0,0.1)' : 'none'
+          }}>
+            {telefono.length}
+          </div>
+          
           <div style={{
             display: 'flex',
             gap: '10px',
@@ -5987,41 +6053,29 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                        color: '#7c3aed',
                        width: '80px'
                      }}>
-                       {!viaje.base ? (
-                         <input
-                           type="text"
-                           value={editandoViaje === viaje.id ? baseEdit : ''}
-                           onChange={(e) => {
-                             const valor = e.target.value;
-                             // Permitir números del 01-13 con formato de dos dígitos
-                             if (valor === '' || 
-                                 valor === '01' || valor === '02' || valor === '03' || valor === '04' || valor === '05' || 
-                                 valor === '06' || valor === '07' || valor === '08' || valor === '09' || 
-                                 valor === '10' || valor === '11' || valor === '12' || valor === '13' ||
-                                 // Permitir escritura progresiva (0, 1, 2, etc.)
-                                 valor === '0' || valor === '1' || valor === '2' || valor === '3' || valor === '4' || 
-                                 valor === '5' || valor === '6' || valor === '7' || valor === '8' || valor === '9') {
-                               if (editandoViaje !== viaje.id) {
-                                 iniciarEdicionViaje(viaje);
-                               }
-                               setBaseEdit(valor);
-                             }
-                           }}
-                           maxLength="2"
-                           style={{
-                             width: '60px',
-                             padding: '4px 6px',
-                             border: '1px solid #ccc',
-                             borderRadius: 4,
-                             textAlign: 'center',
-                             fontSize: 12,
-                             fontWeight: 'bold'
-                           }}
-                           placeholder="Base"
-                         />
-                       ) : (
-                         viaje.base
-                       )}
+                       <input
+                         type="text"
+                         value={editandoViaje === viaje.id ? baseEdit : (viaje.base || '')}
+                         onChange={(e) => {
+                           const valor = e.target.value;
+                           // Permitir cualquier texto para base (sin restricciones)
+                           if (editandoViaje !== viaje.id) {
+                             iniciarEdicionViaje(viaje);
+                           }
+                           setBaseEdit(valor);
+                         }}
+                         style={{
+                           width: '60px',
+                           padding: '4px 6px',
+                           border: '1px solid #ccc',
+                           borderRadius: 4,
+                           textAlign: 'center',
+                           fontSize: 12,
+                           fontWeight: 'bold',
+                           backgroundColor: 'white'
+                         }}
+                         placeholder="Base"
+                       />
                      </td>
                      <td style={{
                        padding: '12px 4px',
