@@ -70,8 +70,8 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
                 };
                 window.open(urls[item.id], '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
               } else {
-                // Cambiar a la sección correspondiente dentro del mismo sistema
-                setActiveSection(item.id);
+              // Cambiar a la sección correspondiente dentro del mismo sistema
+              setActiveSection(item.id);
               }
             }}
             style={{

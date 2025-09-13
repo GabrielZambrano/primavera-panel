@@ -2048,13 +2048,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         console.log('📱 Registrando en colección "clientestelefonos1" (número móvil de más de 9 dígitos)');
       } else {
         // 8-9 dígitos: usar la lógica anterior como fallback
-        if (tipoCliente === 'cliente') {
-          coleccionNombre = 'clientes';
-        } else if (tipoCliente === 'cliente telefono') {
+      if (tipoCliente === 'cliente') {
+        coleccionNombre = 'clientes';
+      } else if (tipoCliente === 'cliente telefono') {
           coleccionNombre = 'clientestelefonos1';
-        } else if (tipoCliente === 'cliente fijo') {
-          coleccionNombre = 'clientes fijos';
-        } else {
+      } else if (tipoCliente === 'cliente fijo') {
+        coleccionNombre = 'clientes fijos';
+      } else {
           throw new Error('Tipo de cliente no válido para números de 8-9 dígitos');
         }
         console.log(`📞 Registrando en colección "${coleccionNombre}" (fallback para ${telefono.length} dígitos)`);
@@ -2125,7 +2125,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         console.log('📱 Guardando dirección en historial para número de celular:', telefono);
         await guardarEnHistorialCliente(telefono, datosCliente.direccion, datosCliente.coordenadas || '', 'manual');
       }
-
+      
       // Cerrar el modal de registro
       setModalRegistroCliente({ 
         open: false, 
@@ -4184,8 +4184,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         // Para celulares (10+ dígitos), usar el teléfono completo como ID
         telefonoId = telefono;
         console.log('📱 Buscando cliente con teléfono completo:', telefonoId);
-        clienteRef = doc(db, coleccionNombre, telefonoId);
-        clienteSnapshot = await getDoc(clienteRef);
+          clienteRef = doc(db, coleccionNombre, telefonoId);
+          clienteSnapshot = await getDoc(clienteRef);
       } else {
         // Para teléfonos de 7 dígitos, usar el teléfono original
         clienteRef = doc(db, coleccionNombre, telefonoId);
@@ -4266,7 +4266,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         });
 
         const nuevaDireccionData = {
-          direccion: direccion,
+            direccion: direccion,
           coordenadas: coordenadasNormalizadas,
           fechaRegistro: new Date(),
           activa: true, // La nueva dirección queda como principal
