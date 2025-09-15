@@ -2456,20 +2456,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        }); // Fecha como cadena en formato "10/9/2025, 5:14:46 a. m."
        const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
        
-       // Coordenadas por defecto si no hay coordenadas
-       const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
-       const coordenadasFinales = coordenadas || coordenadasPorDefecto;
-       
-       // Asegurar que las coordenadas sean válidas antes de hacer split
-       let latitud, longitud;
-       if (coordenadasFinales && coordenadasFinales.includes(',')) {
-         const coords = coordenadasFinales.split(',').map(s => s.trim());
-         latitud = coords[0] || '-0.2298500';
-         longitud = coords[1] || '-78.5249500';
-       } else {
-         latitud = '-0.2298500';
-         longitud = '-78.5249500';
-       }
+      // Coordenadas FIJAS para pedidosDisponibles1 - SIEMPRE usar estas coordenadas
+      const latitud = '-0.2298500';
+      const longitud = '-78.5249500';
        
        // Determinar el teléfono completo para WhatsApp
        let telefonoCompleto = telefono || '';
@@ -2656,20 +2645,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        const tokenConductor = conductorData.token || conductorData.fcmToken || conductorData.deviceToken || '';
        const tokenValido = validarTokenConductor(tokenConductor);
        
-       // Coordenadas por defecto si no hay coordenadas
-       const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
-       const coordenadasFinales = coordenadas || coordenadasPorDefecto;
-       
-       // Asegurar que las coordenadas sean válidas antes de hacer split
-       let latitud, longitud;
-       if (coordenadasFinales && coordenadasFinales.includes(',')) {
-         const coords = coordenadasFinales.split(',').map(s => s.trim());
-         latitud = coords[0] || '-0.2298500';
-         longitud = coords[1] || '-78.5249500';
-       } else {
-         latitud = '-0.2298500';
-         longitud = '-78.5249500';
-       }
+       // Coordenadas por defecto SIEMPRE para pedidos disponibles
+       const latitud = '-0.2298500';
+       const longitud = '-78.5249500';
        
        // Asegurar que latitud y longitud no sean undefined
        const latitudFinal = latitud || '-0.2298500';
@@ -4049,20 +4027,9 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     
     try {
 
-      // Coordenadas por defecto si no hay coordenadas
-      const coordenadasPorDefecto = '-0.2298500,-78.5249500'; // Quito centro
-      const coordenadasFinales = coordenadas || coordenadasPorDefecto;
-      
-      // Asegurar que las coordenadas sean válidas antes de hacer split
-      let latitud, longitud;
-      if (coordenadasFinales && coordenadasFinales.includes(',')) {
-        const coords = coordenadasFinales.split(',').map(s => s.trim());
-        latitud = coords[0] || '-0.2298500';
-        longitud = coords[1] || '-78.5249500';
-      } else {
-        latitud = '-0.2298500';
-        longitud = '-78.5249500';
-      }
+       // Coordenadas por defecto SIEMPRE para pedidos disponibles
+       const latitud = '-0.2298500';
+       const longitud = '-78.5249500';
       
       const fecha = new Date(); // Timestamp
       const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
@@ -8157,9 +8124,9 @@ function ReservasContent({ operadorAutenticado }) {
         return;
       }
 
-      // Preparar documento para pedidoEnCurso
-      const coordenadasFinales = reserva.coordenadas || '-0.2298500,-78.5249500';
-      const [latitud, longitud] = coordenadasFinales.split(',').map(s => s.trim());
+      // Preparar documento para pedidoEnCurso - SIEMPRE usar coordenadas fijas
+      const latitud = '-0.2298500';
+      const longitud = '-78.5249500';
       const fecha = reserva.fechaHoraReserva || new Date(); // Usar la fecha de la reserva original
       const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
 
