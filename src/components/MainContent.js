@@ -630,6 +630,25 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     coleccion: '' // 'pedidosDisponibles1' o 'pedidoEnCurso'
   });
 
+  // Estados para reasignación de unidad
+  const [nuevaUnidad, setNuevaUnidad] = useState('');
+  const [tiempoNuevaUnidad, setTiempoNuevaUnidad] = useState('');
+  const [mostrarReasignacion, setMostrarReasignacion] = useState(false);
+  const [unidadesDisponibles, setUnidadesDisponibles] = useState([]);
+  const [mostrarUnidades, setMostrarUnidades] = useState(false);
+
+  // Cerrar lista de unidades al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (mostrarUnidades && !event.target.closest('.unidad-input-container')) {
+        setMostrarUnidades(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [mostrarUnidades]);
+
   // Estados para modal de edición de datos del cliente
   const [modalEditarCliente, setModalEditarCliente] = useState({
     open: false,
@@ -2706,6 +2725,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          base: convertirNumeroABase(base || '0'), // Nuevo campo base
          destino: '', // Destino por defecto
          fecha: fecha,
+         createdAt: new Date(),
          estado: 'Aceptado',
          pedido: 'Aceptado',
          // Datos del conductor - ID único para asignación manual
@@ -3040,6 +3060,155 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     } catch (error) {
       console.error('❌ Error al cancelar pedido:', error);
       setModal({ open: true, success: false, message: 'Error al cancelar el pedido.' });
+    }
+  };
+
+  // Función para cargar unidades disponibles
+  const cargarUnidadesDisponibles = async () => {
+    try {
+      const conductoresRef = collection(db, 'conductores');
+      const q = query(conductoresRef, where('estatus', '==', true));
+      const querySnapshot = await getDocs(q);
+      
+      const unidades = querySnapshot.docs.map(doc => {
+        const data = doc.data();
+        return {
+          numero: data.numeroUnidad || data.unidad || data.numero || data.id,
+          nombre: data.nombre || 'Sin nombre',
+          telefono: data.telefono || 'Sin teléfono',
+          placa: data.placa || 'Sin placa'
+        };
+      }).filter(unidad => unidad.numero); // Filtrar unidades que tengan número
+      
+      setUnidadesDisponibles(unidades);
+    } catch (error) {
+      console.error('Error al cargar unidades:', error);
+    }
+  };
+
+  // Función para reasignar unidad
+  const reasignarUnidad = async () => {
+    if (!modalAccionesPedido.pedido || !nuevaUnidad.trim()) {
+      setModal({ open: true, success: false, message: 'Por favor ingrese la nueva unidad para reasignar.' });
+      return;
+    }
+
+    try {
+      const pedidoOriginal = modalAccionesPedido.pedido;
+      
+      // Buscar conductor por unidad - intentar diferentes campos
+      const conductoresRef = collection(db, 'conductores');
+      let conductorData = null;
+      
+      // Intentar buscar por diferentes campos de unidad
+      const camposUnidad = ['numeroUnidad', 'unidad', 'numero', 'id'];
+      
+      for (const campo of camposUnidad) {
+        const q = query(conductoresRef, where(campo, '==', nuevaUnidad));
+        const querySnapshot = await getDocs(q);
+        
+        if (!querySnapshot.empty) {
+          conductorData = querySnapshot.docs[0].data();
+          console.log(`✅ Conductor encontrado por campo '${campo}':`, conductorData);
+          break;
+        }
+      }
+      
+      // Si no se encontró por igualdad exacta, intentar buscar por string que contenga la unidad
+      if (!conductorData) {
+        const q = query(conductoresRef);
+        const allConductoresSnapshot = await getDocs(q);
+        
+        for (const docSnapshot of allConductoresSnapshot.docs) {
+          const data = docSnapshot.data();
+          // Buscar en todos los campos posibles
+          for (const campo of camposUnidad) {
+            if (data[campo] && String(data[campo]).includes(nuevaUnidad)) {
+              conductorData = data;
+              console.log(`✅ Conductor encontrado por coincidencia parcial en campo '${campo}':`, conductorData);
+              break;
+            }
+          }
+          if (conductorData) break;
+        }
+      }
+      
+      if (!conductorData) {
+        setModal({ open: true, success: false, message: `No se encontró conductor para la unidad ${nuevaUnidad}. Verifique que la unidad existe en el sistema.` });
+        return;
+      }
+      
+      // Verificar si la unidad está activa
+      if (!conductorData.estatus) {
+        setModal({ open: true, success: false, message: `La unidad ${nuevaUnidad} está inactiva.` });
+        return;
+      }
+
+      // Generar nuevo ID único para el conductor manual
+      const idConductorManual = `manual_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+
+      // Crear nuevo documento en pedidoEnCurso con la nueva unidad
+      const nuevoPedidoEnCursoData = {
+        ...pedidoOriginal,
+        // Datos de la nueva unidad
+        numeroUnidad: nuevaUnidad,
+        unidad: nuevaUnidad,
+        // MANTENER el tiempo original del documento
+        tiempo: pedidoOriginal.tiempo || pedidoOriginal.minutos || '5',
+        minutos: pedidoOriginal.minutos || parseInt(pedidoOriginal.tiempo) || 5,
+        // Datos del nuevo conductor
+        idConductor: idConductorManual,
+        correo: conductorData.correo || conductorData.id || '',
+        nombre: conductorData.nombre || '',
+        nombreConductor: conductorData.nombre || '',
+        placa: conductorData.placa || '',
+        color: conductorData.color || '',
+        telefonoConductor: conductorData.telefono || '',
+        foto: conductorData.foto || '',
+        tokenConductor: conductorData.token || '',
+        // MANTENER el puerto original del documento
+        puerto: pedidoOriginal.puerto || '3005',
+        // Actualizar fecha de reasignación
+        fechaReasignacion: new Date(),
+        fecha: pedidoOriginal.fecha || new Date(), // Mantener fecha original si existe
+        createdAt: new Date(),
+        // Mantener otros datos del pedido original
+        estado: 'Aceptado',
+        pedido: 'Aceptado',
+        modoAsignacion: 'reasignacion',
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+      };
+
+      // Guardar nuevo documento en pedidoEnCurso
+      const nuevoDocRef = await addDoc(collection(db, 'pedidoEnCurso'), nuevoPedidoEnCursoData);
+      await updateDoc(nuevoDocRef, { id: nuevoDocRef.id });
+
+      // Crear duplicado en NotificaciOnenCurso
+      const notificacionEnCursoData = {
+        ...nuevoPedidoEnCursoData,
+        id: nuevoDocRef.id,
+        fechaNotificacion: new Date(),
+        estadoNotificacion: 'pendiente',
+        motivoReasignacion: `Reasignado desde unidad ${pedidoOriginal.numeroUnidad || pedidoOriginal.unidad}`
+      };
+      
+      await addDoc(collection(db, 'NotificaciOnenCurso'), notificacionEnCursoData);
+
+      // Eliminar el documento original
+      const pedidoOriginalRef = doc(db, modalAccionesPedido.coleccion, pedidoOriginal.id);
+      await deleteDoc(pedidoOriginalRef);
+
+      // Limpiar formulario y cerrar modal
+      setNuevaUnidad('');
+      setMostrarReasignacion(false);
+      setMostrarUnidades(false);
+      setModalAccionesPedido({ open: false, pedido: null, coleccion: '' });
+      
+      setModal({ open: true, success: true, message: `Pedido reasignado exitosamente a la unidad ${nuevaUnidad}.` });
+
+    } catch (error) {
+      console.error('Error al reasignar unidad:', error);
+      setModal({ open: true, success: false, message: 'Error al reasignar el pedido.' });
     }
   };
 
@@ -3931,6 +4100,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          pedido: 'Aceptado',
          // Fecha como timestamp
          fecha: new Date(),
+         createdAt: new Date(),
          // Datos del conductor - ID único para asignación manual
          idConductor: idConductorManual, // ID único generado
          correo: conductorData.correo || conductorData.id || '', // Correo real del conductor
@@ -5624,6 +5794,17 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                  <tr style={{ background: '#f8fafc' }}>
                    <th style={{
                      padding: '12px 8px',
+                     textAlign: 'center',
+                     fontWeight: 'bold',
+                     color: '#374151',
+                     borderBottom: '2px solid #e5e7eb',
+                     whiteSpace: 'nowrap',
+                     width: '80px'
+                   }}>
+                     🕐 Hora
+                   </th>
+                   <th style={{
+                     padding: '12px 8px',
                      textAlign: 'left',
                      fontWeight: 'bold',
                      color: '#374151',
@@ -5763,6 +5944,75 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                         e.currentTarget.style.background = colorFondoBase;
                       }}
                     >
+                     <td style={{
+                       padding: '12px 8px',
+                       textAlign: 'center',
+                       fontWeight: 'bold',
+                       color: '#1f2937',
+                       width: '80px',
+                       fontSize: '12px'
+                     }}>
+                       {(() => {
+                         try {
+                           // Buscar diferentes campos de fecha que puedan existir
+                           const fechaField = viaje.fecha || viaje.createdAt || viaje.fechaCreacion || viaje.timestamp;
+                           
+                           if (fechaField) {
+                             let fecha;
+                             
+                             // Si es un timestamp de Firestore (tiene método toDate)
+                             if (fechaField.toDate && typeof fechaField.toDate === 'function') {
+                               fecha = fechaField.toDate();
+                             }
+                             // Si es un string, intentar parsearlo
+                             else if (typeof fechaField === 'string') {
+                               // Formato 1: "20/9/2025, 11:13:30 p. m."
+                               // Formato 2: "20 de septiembre de 2025, 10:51:41 p.m. UTC-5"
+                               if (fechaField.includes(',')) {
+                                 // Intentar parsear el string de fecha
+                                 fecha = new Date(fechaField);
+                                 
+                                 // Si no se pudo parsear correctamente, intentar extraer la hora manualmente
+                                 if (isNaN(fecha.getTime())) {
+                                   const match = fechaField.match(/(\d{1,2}):(\d{2}):(\d{2})/);
+                                   if (match) {
+                                     const [, hora, minutos] = match;
+                                     const horaNum = parseInt(hora);
+                                     const minutosNum = parseInt(minutos);
+                                     
+                                     // Crear fecha actual pero con la hora extraída
+                                     const fechaActual = new Date();
+                                     fechaActual.setHours(horaNum, minutosNum, 0, 0);
+                                     fecha = fechaActual;
+                                   }
+                                 }
+                               } else {
+                                 // Si no tiene coma, intentar parsear como timestamp
+                                 fecha = new Date(fechaField);
+                               }
+                             }
+                             // Si es un objeto Date o timestamp numérico
+                             else {
+                               fecha = new Date(fechaField);
+                             }
+                             
+                             if (!isNaN(fecha.getTime())) {
+                               return fecha.toLocaleTimeString('es-ES', {
+                                 hour: '2-digit',
+                                 minute: '2-digit',
+                                 hour12: true
+                               });
+                             }
+                           }
+                           
+                           // Si no hay campo de fecha, mostrar guión
+                           return '-';
+                         } catch (error) {
+                           console.log('Error parsing fecha pedidosDisponibles1:', viaje, error);
+                           return '-';
+                         }
+                       })()}
+                     </td>
                      <td style={{
                        padding: '12px 8px',
                        fontWeight: 'bold',
@@ -6292,6 +6542,17 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                 <tr style={{ background: '#f8fafc' }}>
                   <th style={{
                     padding: '12px 16px',
+                    textAlign: 'center',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '2px solid #e5e7eb',
+                    whiteSpace: 'nowrap',
+                    width: '80px'
+                  }}>
+                    🕐 Hora
+                  </th>
+                  <th style={{
+                    padding: '12px 16px',
                     textAlign: 'left',
                     fontWeight: 'bold',
                     color: '#374151',
@@ -6387,6 +6648,75 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                           : (index % 2 === 0 ? '#fff' : '#fafbff');
                       }}
                     >
+                    <td style={{
+                      padding: '12px 16px',
+                      textAlign: 'center',
+                      fontWeight: 'bold',
+                      color: '#1f2937',
+                      width: '80px',
+                      fontSize: '12px'
+                    }}>
+                      {(() => {
+                        try {
+                          // Buscar diferentes campos de fecha que puedan existir
+                          const fechaField = pedido.fecha || pedido.createdAt || pedido.fechaCreacion || pedido.timestamp || pedido.fechaHoraReserva;
+                          
+                          if (fechaField) {
+                            let fecha;
+                            
+                            // Si es un timestamp de Firestore (tiene método toDate)
+                            if (fechaField.toDate && typeof fechaField.toDate === 'function') {
+                              fecha = fechaField.toDate();
+                            }
+                            // Si es un string, intentar parsearlo
+                            else if (typeof fechaField === 'string') {
+                              // Formato 1: "20/9/2025, 11:13:30 p. m."
+                              // Formato 2: "20 de septiembre de 2025, 10:51:41 p.m. UTC-5"
+                              if (fechaField.includes(',')) {
+                                // Intentar parsear el string de fecha
+                                fecha = new Date(fechaField);
+                                
+                                // Si no se pudo parsear correctamente, intentar extraer la hora manualmente
+                                if (isNaN(fecha.getTime())) {
+                                  const match = fechaField.match(/(\d{1,2}):(\d{2}):(\d{2})/);
+                                  if (match) {
+                                    const [, hora, minutos] = match;
+                                    const horaNum = parseInt(hora);
+                                    const minutosNum = parseInt(minutos);
+                                    
+                                    // Crear fecha actual pero con la hora extraída
+                                    const fechaActual = new Date();
+                                    fechaActual.setHours(horaNum, minutosNum, 0, 0);
+                                    fecha = fechaActual;
+                                  }
+                                }
+                              } else {
+                                // Si no tiene coma, intentar parsear como timestamp
+                                fecha = new Date(fechaField);
+                              }
+                            }
+                            // Si es un objeto Date o timestamp numérico
+                            else {
+                              fecha = new Date(fechaField);
+                            }
+                            
+                            if (!isNaN(fecha.getTime())) {
+                              return fecha.toLocaleTimeString('es-ES', {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                hour12: true
+                              });
+                            }
+                          }
+                          
+                          // Si no hay campo de fecha, mostrar guión
+                          return '-';
+                        } catch (error) {
+                          console.log('Error parsing fecha pedidosEnCurso:', pedido, error);
+                          return '-';
+                        }
+                      })()}
+                    </td>
                     <td style={{
                       padding: '12px 16px',
                       fontWeight: 'bold',
@@ -7230,6 +7560,202 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               >
                     🚫 Cancelado por Unidad
               </button>
+
+              <button
+                onClick={() => {
+                  setMostrarReasignacion(!mostrarReasignacion);
+                  if (!mostrarReasignacion) {
+                    cargarUnidadesDisponibles();
+                  }
+                }}
+                style={{
+                  padding: '12px 20px',
+                  border: 'none',
+                  borderRadius: '8px',
+                  backgroundColor: '#f59e0b',
+                  color: 'white',
+                  fontSize: '14px',
+                  fontWeight: 'bold',
+                  cursor: 'pointer',
+                  transition: 'all 0.2s'
+                }}
+                onMouseEnter={(e) => {
+                  e.target.style.backgroundColor = '#d97706';
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.backgroundColor = '#f59e0b';
+                }}
+              >
+                🔄 Reasignar a Otra Unidad
+              </button>
+
+              {/* Sección de reasignación */}
+              {mostrarReasignacion && (
+                <div style={{
+                  marginTop: '15px',
+                  padding: '15px',
+                  background: '#fef3c7',
+                  borderRadius: '8px',
+                  border: '1px solid #f59e0b'
+                }}>
+                  <h4 style={{
+                    margin: '0 0 10px 0',
+                    color: '#92400e',
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    textAlign: 'left'
+                  }}>
+                    🔄 Reasignar Pedido
+                  </h4>
+                  <p style={{
+                    margin: '0 0 10px 0',
+                    color: '#92400e',
+                    fontSize: '12px',
+                    textAlign: 'left'
+                  }}>
+                    Unidad actual: {modalAccionesPedido.pedido?.numeroUnidad || modalAccionesPedido.pedido?.unidad || 'Sin asignar'}
+                  </p>
+                  
+                  <div style={{ marginBottom: '10px', position: 'relative' }}>
+                    <div className="unidad-input-container" style={{ position: 'relative' }}>
+                      <input
+                        type="text"
+                        placeholder="Nueva unidad"
+                        value={nuevaUnidad}
+                        onChange={(e) => {
+                          setNuevaUnidad(e.target.value);
+                          setMostrarUnidades(e.target.value.length > 0);
+                        }}
+                        onFocus={() => setMostrarUnidades(true)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          fontSize: '14px',
+                          boxSizing: 'border-box'
+                        }}
+                      />
+                      
+                      {/* Lista de unidades disponibles */}
+                      {mostrarUnidades && unidadesDisponibles.length > 0 && (
+                        <div style={{
+                          position: 'absolute',
+                          top: '100%',
+                          left: 0,
+                          right: 0,
+                          backgroundColor: 'white',
+                          border: '1px solid #d1d5db',
+                          borderRadius: '6px',
+                          maxHeight: '150px',
+                          overflowY: 'auto',
+                          zIndex: 1000,
+                          boxShadow: '0 4px 6px rgba(0, 0, 0, 0.1)'
+                        }}>
+                          {unidadesDisponibles
+                            .filter(unidad => 
+                              String(unidad.numero).toLowerCase().includes(nuevaUnidad.toLowerCase()) ||
+                              unidad.nombre.toLowerCase().includes(nuevaUnidad.toLowerCase())
+                            )
+                            .slice(0, 10)
+                            .map((unidad, index) => (
+                              <div
+                                key={index}
+                                onClick={() => {
+                                  setNuevaUnidad(String(unidad.numero));
+                                  setMostrarUnidades(false);
+                                }}
+                                style={{
+                                  padding: '8px 12px',
+                                  cursor: 'pointer',
+                                  borderBottom: '1px solid #f3f4f6',
+                                  fontSize: '12px'
+                                }}
+                                onMouseEnter={(e) => e.target.style.backgroundColor = '#f9fafb'}
+                                onMouseLeave={(e) => e.target.style.backgroundColor = 'white'}
+                              >
+                                <div style={{ fontWeight: 'bold' }}>Unidad: {unidad.numero}</div>
+                                <div style={{ color: '#6b7280' }}>
+                                  {unidad.nombre} | {unidad.placa}
+                                </div>
+                              </div>
+                            ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  
+                  {/* Información sobre tiempo y puerto que se mantienen */}
+                  <div style={{
+                    marginBottom: '10px',
+                    padding: '8px 12px',
+                    backgroundColor: '#f0f9ff',
+                    borderRadius: '6px',
+                    border: '1px solid #e0f2fe'
+                  }}>
+                    <p style={{
+                      margin: '0',
+                      color: '#0369a1',
+                      fontSize: '12px',
+                      textAlign: 'left'
+                    }}>
+                      📋 Se mantendrán: Tiempo: {modalAccionesPedido.pedido?.tiempo || modalAccionesPedido.pedido?.minutos || '5'} min | Puerto: {modalAccionesPedido.pedido?.puerto || '3005'}
+                    </p>
+                  </div>
+                  
+                  {/* Información de unidades disponibles */}
+                  {unidadesDisponibles.length > 0 && (
+                    <p style={{
+                      margin: '0 0 10px 0',
+                      color: '#92400e',
+                      fontSize: '11px',
+                      textAlign: 'left'
+                    }}>
+                      💡 {unidadesDisponibles.length} unidades disponibles. Escriba para filtrar.
+                    </p>
+                  )}
+                  
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button
+                      onClick={reasignarUnidad}
+                      disabled={!nuevaUnidad.trim()}
+                      style={{
+                        flex: 1,
+                        padding: '10px 16px',
+                        border: 'none',
+                        borderRadius: '6px',
+                        backgroundColor: nuevaUnidad.trim() ? '#10b981' : '#9ca3af',
+                        color: 'white',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        cursor: nuevaUnidad.trim() ? 'pointer' : 'not-allowed',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      ✅ Confirmar Reasignación
+                    </button>
+                    <button
+                      onClick={() => {
+                        setMostrarReasignacion(false);
+                        setNuevaUnidad('');
+                        setMostrarUnidades(false);
+                      }}
+                      style={{
+                        padding: '10px 16px',
+                        border: '1px solid #6b7280',
+                        borderRadius: '6px',
+                        backgroundColor: 'transparent',
+                        color: '#374151',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      ❌ Cancelar
+                    </button>
+                  </div>
+                </div>
+              )}
 
 
               <button
