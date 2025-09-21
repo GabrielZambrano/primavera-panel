@@ -6628,24 +6628,61 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                   // Determinar si el pedido está iniciado (solo para pedidos de aplicación)
                   const esPedidoIniciado = pedido.tipopedido === 'Automático' && pedido.pedido === 'Iniciado';
                   
+                  // Determinar el tipo de pedido basado en sus características (igual que en pedidos disponibles)
+                  const tieneDireccionesCliente = pedido.direccionesCliente && Array.isArray(pedido.direccionesCliente) && pedido.direccionesCliente.length > 0;
+                  const tieneTipoPedido = pedido.tipoPedido && pedido.tipoPedido !== '';
+                  
+                  // Determinar el tipo de pedido
+                  let tipoPedido = 'basico'; // Por defecto
+                  if (tieneDireccionesCliente) {
+                    tipoPedido = 'conDirecciones';
+                  } else if (tieneTipoPedido) {
+                    tipoPedido = 'conTipoPedido';
+                  } else {
+                    tipoPedido = 'basico'; // Sin direccionesCliente ni tipoPedido
+                  }
+                  
+                  // Colores de fondo basados en el tipo de pedido - MÁS INTENSOS
+                  let colorFondoBase, colorFondoHover, colorBorde;
+                  
+                  if (tipoPedido === 'conDirecciones') {
+                    // Verde para pedidos con direccionesCliente
+                    colorFondoBase = '#dcfce7';
+                    colorFondoHover = '#bbf7d0';
+                    colorBorde = '#86efac';
+                  } else if (tipoPedido === 'conTipoPedido') {
+                    // Rojo para pedidos con tipoPedido
+                    colorFondoBase = '#fee2e2';
+                    colorFondoHover = '#fecaca';
+                    colorBorde = '#f87171';
+                  } else {
+                    // Amarillo para pedidos básicos (sin direccionesCliente ni tipoPedido)
+                    colorFondoBase = '#fef3c7';
+                    colorFondoHover = '#fde68a';
+                    colorBorde = '#f59e0b';
+                  }
+                  
+                  // Si es pedido iniciado, usar colores especiales
+                  if (esPedidoIniciado) {
+                    colorFondoBase = '#fef3c7';
+                    colorFondoHover = '#fde68a';
+                    colorBorde = '#f59e0b';
+                  }
+                  
                   return (
                     <tr
                       key={pedido.id}
                       style={{
                         borderBottom: '1px solid #f1f5f9',
-                        background: esPedidoIniciado 
-                          ? '#fef3c7' // Color amarillo claro para pedidos iniciados
-                          : (index % 2 === 0 ? '#fff' : '#fafbff'),
-                        transition: 'background 0.2s ease',
-                        borderLeft: esPedidoIniciado ? '4px solid #f59e0b' : 'none' // Borde naranja para destacar
+                        borderLeft: `4px solid ${colorBorde}`,
+                        background: colorFondoBase,
+                        transition: 'background 0.2s ease'
                       }}
                       onMouseEnter={(e) => {
-                        e.currentTarget.style.background = esPedidoIniciado ? '#fde68a' : '#fef2f2';
+                        e.currentTarget.style.background = colorFondoHover;
                       }}
                       onMouseLeave={(e) => {
-                        e.currentTarget.style.background = esPedidoIniciado 
-                          ? '#fef3c7' 
-                          : (index % 2 === 0 ? '#fff' : '#fafbff');
+                        e.currentTarget.style.background = colorFondoBase;
                       }}
                     >
                     <td style={{
