@@ -4,11 +4,10 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
   const menuItems = [
     { id: 'dashboard', label: 'Dashboard', icon: '📊' },
     { id: 'conductores', label: 'Conductores', icon: '👨‍💼' },
+    { id: 'mapa-conductores', label: 'Mapa Conductores', icon: '🗺️' },
     { id: 'reportes', label: 'Reportes', icon: '📈' },
     { id: 'operadores', label: 'Operadores', icon: '👥' },
-    { id: 'whatsapp1', label: 'Whatsapp1', icon: '💬' },
-    { id: 'whatsapp2', label: 'Whatsapp2', icon: '💬' },
-    { id: 'whatsapp3', label: 'Whatsapp3', icon: '💬' }
+    { id: 'whatsapp1', label: 'Whatsapp1', icon: '💬' }
   ];
 
   return (
@@ -36,7 +35,7 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
             fontWeight: 'bold',
             color: '#f9fafb'
           }}>
-            Taxi Turismo
+            App Plaza
           </h2>
         )}
         <button
@@ -61,14 +60,9 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
           <div
             key={item.id}
             onClick={() => {
-              // Para las opciones de WhatsApp, abrir en ventana nueva
-              if (item.id.startsWith('whatsapp')) {
-                const urls = {
-                  'whatsapp1': 'http://37.60.227.239:3005/',
-                  'whatsapp2': 'http://37.60.227.239:3006/',
-                  'whatsapp3': 'http://37.60.227.239:3022/'
-                };
-                window.open(urls[item.id], '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+              // Para WhatsApp, abrir en ventana nueva
+              if (item.id === 'whatsapp1') {
+                window.open('http://5.189.168.188:3020/', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
               } else {
               // Cambiar a la sección correspondiente dentro del mismo sistema
               setActiveSection(item.id);

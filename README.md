@@ -1,6 +1,6 @@
-# Login Firebase App
+# App Plaza
 
-Una aplicación React que implementa autenticación usando Firebase, con funcionalidades de login, registro y dashboard.
+Una aplicación React para gestión de servicios de plaza, con autenticación usando Firebase, funcionalidades de login, registro y dashboard.
 
 ## Características
 
@@ -22,7 +22,7 @@ Una aplicación React que implementa autenticación usando Firebase, con funcion
 1. Clona el repositorio:
 ```bash
 git clone <url-del-repositorio>
-cd login-firebase
+cd app-plaza
 ```
 
 2. Instala las dependencias:

@@ -4,14 +4,13 @@ import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCNbzp8lDOdJpUWFBpjC-2bHYLemBj8cos",
-  authDomain: "appecdriver.firebaseapp.com",
-  databaseURL: "https://appecdriver-default-rtdb.firebaseio.com",
-  projectId: "appecdriver",
-  storageBucket: "appecdriver.appspot.com",
-  messagingSenderId: "967992971623",
-  appId: "1:967992971623:web:51dc3ba017676acdb0dfc2",
-  measurementId: "G-PYJ7J08014"
+  apiKey: "AIzaSyBNvc6hDV4khuUxu7TSuxqlZLAI4j52dUA",
+  authDomain: "plazaapp-5e5b5.firebaseapp.com",
+  projectId: "plazaapp-5e5b5",
+  storageBucket: "plazaapp-5e5b5.firebasestorage.app",
+  messagingSenderId: "572023972551",
+  appId: "1:572023972551:web:0e07eb89dee332d28dd4e2",
+  measurementId: "G-WHPGTSQBK5"
 };
 
 

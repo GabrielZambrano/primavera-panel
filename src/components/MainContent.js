@@ -4,6 +4,7 @@ import { collection, query, where, getDocs, addDoc, updateDoc, doc, getDoc, dele
 import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
 import { db, storage } from "../firebaseConfig";
 import * as XLSX from 'xlsx';
+import DriverTracking from './DriverTracking';
 
 // import axios from 'axios'; // Comentado porque no se usa
 
@@ -604,7 +605,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   });
        const [viajesAsignados, setViajesAsignados] = useState([]);
    const [cargandoViajes, setCargandoViajes] = useState(false);
-   const [pedidosDisponibles, setpedidosDisponibles1] = useState([]);
+   const [pedidosDisponibles, setPedidosDisponibles] = useState([]);
      const [editandoViaje, setEditandoViaje] = useState(null);
   const [tiempoEdit, setTiempoEdit] = useState('');
   const [unidadEdit, setUnidadEdit] = useState('');
@@ -627,7 +628,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
   const [modalAccionesPedido, setModalAccionesPedido] = useState({
     open: false,
     pedido: null,
-    coleccion: '' // 'pedidosDisponibles1' o 'pedidoEnCurso'
+    coleccion: '' // 'pedidosDisponibles' o 'pedidoEnCurso'
   });
 
   // Estados para reasignación de unidad
@@ -1010,10 +1011,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
 
   // Configurar listeners en tiempo real para las colecciones
   useEffect(() => {
-    // Listener para pedidosDisponibles1
-    const qDisponibles = query(collection(db, 'pedidosDisponibles1'));
+    // Listener para pedidosDisponibles
+    const qDisponibles = query(collection(db, 'pedidosDisponibles'));
     const unsubscribeDisponibles = onSnapshot(qDisponibles, (querySnapshot) => {
-      console.log('🔄 Listener de pedidosDisponibles1 ejecutado');
+      console.log('🔄 Listener de pedidosDisponibles ejecutado');
       console.log('📊 Número de documentos:', querySnapshot.docs.length);
       
       const pedidos = querySnapshot.docs.map(doc => {
@@ -1022,7 +1023,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         return {
           id: doc.id,
           ...data,
-          coleccion: 'pedidosDisponibles1'
+          coleccion: 'pedidosDisponibles'
         };
       });
       
@@ -1037,10 +1038,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       });
       
       console.log('✅ Pedidos procesados para mostrar:', pedidos.length);
-      setpedidosDisponibles1(pedidos);
+      setPedidosDisponibles(pedidos);
       setCargandoViajes(false);
     }, (error) => {
-      console.error('❌ Error en listener de pedidosDisponibles1:', error);
+      console.error('❌ Error en listener de pedidosDisponibles:', error);
       setCargandoViajes(false);
     });
 
@@ -1113,8 +1114,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     setCargandoViajes(true);
     try {
       // Leer todos los pedidos disponibles
-      const q = query(collection(db, 'pedidosDisponibles1'));
-      console.log('📡 Ejecutando consulta a pedidosDisponibles1...');
+      const q = query(collection(db, 'pedidosDisponibles'));
+      console.log('📡 Ejecutando consulta a pedidosDisponibles...');
       const querySnapshot = await getDocs(q);
       console.log('📊 Documentos encontrados:', querySnapshot.docs.length);
       
@@ -1383,6 +1384,30 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         const clienteDoc = snapshotTelefono.docs[0];
         const clienteData = clienteDoc.data();
         console.log('✅ Cliente encontrado por teléfono:', clienteData);
+        
+        // Cargar la primera dirección del array (si existe)
+        if (clienteData.direcciones && clienteData.direcciones.length > 0) {
+          const direccionActiva = clienteData.direcciones.find(dir => dir.activa === true) || clienteData.direcciones[0];
+          clienteData.direccion = direccionActiva.direccion;
+          clienteData.coordenadas = direccionActiva.coordenadas;
+          clienteData.sector = direccionActiva.sector;
+          console.log('📍 Dirección encontrada:', direccionActiva);
+        }
+        
+        return { encontrado: true, datos: clienteData, tipoCliente: 'cliente telefono' };
+      }
+      
+      // Si no se encuentra por 'telefono', buscar por 'telefonoCompleto'
+      const qTelefonoCompleto = query(
+        collection(db, 'clientestelefonos1'),
+        where('telefonoCompleto', '==', telefonoBusqueda)
+      );
+      const snapshotTelefonoCompleto = await getDocs(qTelefonoCompleto);
+      
+      if (!snapshotTelefonoCompleto.empty) {
+        const clienteDoc = snapshotTelefonoCompleto.docs[0];
+        const clienteData = clienteDoc.data();
+        console.log('✅ Cliente encontrado por telefonoCompleto:', clienteData);
         
         // Cargar la primera dirección del array (si existe)
         if (clienteData.direcciones && clienteData.direcciones.length > 0) {
@@ -1822,7 +1847,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       }));
 
       // Actualizar en la base de datos
-      const pedidoRef = doc(db, 'pedidosDisponibles1', pedidoId);
+      const pedidoRef = doc(db, 'pedidosDisponibles', pedidoId);
       await updateDoc(pedidoRef, {
         direccion: nuevaDireccion.direccion,
         coordenadas: nuevaDireccion.coordenadas || '',
@@ -2255,6 +2280,116 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     return token.length >= 100;
   };
 
+  // Función para verificar y registrar direcciones nuevas en el historial del cliente
+  const verificarYRegistrarDireccionEnHistorial = async (telefono, direccion, coordenadas, sector) => {
+    try {
+      console.log('🔍 Verificando dirección en historial del cliente:', telefono, direccion);
+      console.log('🔍 Parámetros recibidos:', { telefono, direccion, coordenadas, sector });
+      
+      // Buscar el cliente en clientestelefonos1 usando múltiples métodos
+      let clienteDoc = null;
+      let clienteData = null;
+      let clienteRef = null;
+      
+      // Método 1: Buscar con el número tal como está
+      let qTelefono = query(
+        collection(db, 'clientestelefonos1'),
+        where('telefono', '==', telefono)
+      );
+      let snapshotTelefono = await getDocs(qTelefono);
+      
+      console.log('📊 Búsqueda con número original:', telefono, '- Resultado:', snapshotTelefono.docs.length, 'documentos');
+      
+      if (snapshotTelefono.empty && telefono.startsWith('0')) {
+        // Método 2: Si empieza con 0, buscar sin el 0
+        const telefonoSinCero = telefono.substring(1);
+        qTelefono = query(
+          collection(db, 'clientestelefonos1'),
+          where('telefono', '==', telefonoSinCero)
+        );
+        snapshotTelefono = await getDocs(qTelefono);
+        console.log('📊 Búsqueda sin cero inicial:', telefonoSinCero, '- Resultado:', snapshotTelefono.docs.length, 'documentos');
+      }
+      
+      if (snapshotTelefono.empty && telefono.length >= 10) {
+        // Método 3: Si tiene 10+ dígitos, buscar con los últimos 9
+        const ultimos9 = telefono.slice(-9);
+        qTelefono = query(
+          collection(db, 'clientestelefonos1'),
+          where('telefono', '==', ultimos9)
+        );
+        snapshotTelefono = await getDocs(qTelefono);
+        console.log('📊 Búsqueda con últimos 9 dígitos:', ultimos9, '- Resultado:', snapshotTelefono.docs.length, 'documentos');
+      }
+      
+      if (!snapshotTelefono.empty) {
+        clienteDoc = snapshotTelefono.docs[0];
+        clienteData = clienteDoc.data();
+        clienteRef = clienteDoc.ref;
+        
+        console.log('📱 Cliente encontrado:', clienteData.nombre);
+        console.log('📱 ID del documento:', clienteDoc.id);
+        console.log('📱 Teléfono del cliente:', clienteData.telefono);
+        console.log('📱 Direcciones existentes:', clienteData.direcciones);
+        
+        // Obtener direcciones existentes
+        const direccionesExistentes = clienteData.direcciones || [];
+        console.log('📋 Número de direcciones existentes:', direccionesExistentes.length);
+        
+        // Verificar si la dirección ya existe
+        const direccionExiste = direccionesExistentes.some(dir => 
+          dir.direccion && dir.direccion.toLowerCase().trim() === direccion.toLowerCase().trim()
+        );
+        
+        console.log('🔍 ¿Dirección ya existe?', direccionExiste);
+        
+        if (direccionExiste) {
+          console.log('✅ Dirección ya existe en el historial del cliente');
+          return { existe: true, mensaje: 'Dirección ya registrada en historial' };
+        } else {
+          // Agregar nueva dirección al historial
+          const nuevaDireccion = {
+            direccion: direccion,
+            coordenadas: coordenadas || '',
+            sector: sector || '',
+            fechaRegistro: new Date(),
+            activa: true,
+            modoRegistro: 'manual'
+          };
+          
+          console.log('📝 Nueva dirección a agregar:', nuevaDireccion);
+          
+          // Desactivar direcciones anteriores
+          const direccionesActualizadas = direccionesExistentes.map(dir => ({
+            ...dir,
+            activa: false
+          }));
+          
+          // Agregar la nueva dirección
+          direccionesActualizadas.push(nuevaDireccion);
+          
+          console.log('📋 Direcciones actualizadas:', direccionesActualizadas);
+          
+          // Actualizar el cliente con las nuevas direcciones
+          console.log('💾 Guardando direcciones en la base de datos...');
+          await updateDoc(clienteRef, {
+            direcciones: direccionesActualizadas
+          });
+          
+          console.log('✅ Nueva dirección registrada en historial del cliente');
+          return { existe: false, mensaje: 'Nueva dirección registrada en historial' };
+        }
+      } else {
+        console.log('❌ Cliente no encontrado en clientestelefonos1');
+        return { existe: false, mensaje: 'Cliente no encontrado' };
+      }
+    } catch (error) {
+      console.error('❌ Error al verificar/registrar dirección:', error);
+      console.error('❌ Detalles del error:', error.message);
+      return { existe: false, mensaje: 'Error al procesar dirección' };
+    }
+  };
+
   // Función para concatenar prefijo con teléfono para WhatsApp
   const concatenarTelefonoWhatsApp = (telefono, prefijo) => {
     const prefijosWhatsApp = {
@@ -2271,6 +2406,12 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     
     const codigoPais = prefijosWhatsApp[prefijo] || '593'; // Por defecto Ecuador
     let telefonoLimpio = telefono.replace(/\D/g, ''); // Remover caracteres no numéricos
+    
+    // Si el número ya tiene el prefijo del país, devolverlo tal como está
+    if (telefonoLimpio.startsWith(codigoPais)) {
+      console.log('📱 Número ya tiene prefijo completo:', telefonoLimpio);
+      return telefonoLimpio;
+    }
     
     // Remover el 0 inicial si existe
     if (telefonoLimpio.startsWith('0')) {
@@ -2475,38 +2616,49 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        }); // Fecha como cadena en formato "10/9/2025, 5:14:46 a. m."
        const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
        
-      // Coordenadas FIJAS para pedidosDisponibles1 - SIEMPRE usar estas coordenadas
+      // Coordenadas FIJAS para pedidosDisponibles - SIEMPRE usar estas coordenadas
       const latitud = '-0.2298500';
       const longitud = '-78.5249500';
        
-       // Determinar el teléfono completo para WhatsApp
+       // Determinar el teléfono completo para WhatsApp y obtener datos del cliente
        let telefonoCompleto = telefono || '';
+       let telefonoParaPedido = telefono || ''; // Número que se usará en el campo telefono del pedido
+       
        if (telefono && telefono.length >= 9 && telefono.length <= 10) {
-         // Para celulares, buscar el cliente y obtener su prefijo
+         // Para celulares, SIEMPRE generar el número completo con código de país
+         console.log('🔍 Procesando teléfono celular:', telefono);
+         
+         // Generar el número completo usando la función concatenarTelefonoWhatsApp
+         telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+         telefonoParaPedido = telefonoCompleto; // Usar el número completo para el pedido
+         
+         console.log('📱 Número completo generado:', telefonoCompleto);
+         console.log('📱 Número que se guardará en el pedido:', telefonoParaPedido);
+         
+         // Opcional: Buscar el cliente para obtener datos adicionales (pero no cambiar el teléfono)
          try {
-           // Intentar primero con telefonoCompleto (Ecuador por defecto)
-           const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
-           let clienteRef = doc(db, 'clientestelefonos1', telefonoCompletoBusqueda);
-           let clienteSnapshot = await getDoc(clienteRef);
+           const qTelefono = query(
+             collection(db, 'clientestelefonos1'),
+             where('telefono', '==', telefono)
+           );
+           const snapshotTelefono = await getDocs(qTelefono);
            
-           if (clienteSnapshot.exists()) {
-             const clienteData = clienteSnapshot.data();
-             telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
-             console.log('📱 Teléfono completo para WhatsApp:', telefonoCompleto);
-           } else {
-             // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
-             const telefonoBusqueda = telefono.slice(-9);
-             clienteRef = doc(db, 'clientestelefonos1', telefonoBusqueda);
-             clienteSnapshot = await getDoc(clienteRef);
+           if (!snapshotTelefono.empty) {
+             const clienteDoc = snapshotTelefono.docs[0];
+             const clienteData = clienteDoc.data();
+             console.log('📱 Cliente encontrado en clientestelefonos1:', clienteData);
              
-             if (clienteSnapshot.exists()) {
-               const clienteData = clienteSnapshot.data();
-               telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
-               console.log('📱 Teléfono completo para WhatsApp (fallback):', telefonoCompleto);
+             // Si el cliente tiene telefonoCompleto, usarlo en lugar del generado
+             if (clienteData.telefonoCompleto && clienteData.telefonoCompleto.length > 10) {
+               telefonoParaPedido = clienteData.telefonoCompleto;
+               telefonoCompleto = clienteData.telefonoCompleto;
+               console.log('📱 Usando telefonoCompleto del cliente:', telefonoParaPedido);
              }
+           } else {
+             console.log('📱 Cliente no encontrado, usando número generado');
            }
          } catch (error) {
-           console.log('⚠️ No se pudo obtener el prefijo del cliente, usando teléfono original');
+           console.log('⚠️ Error al buscar cliente:', error);
          }
        }
        
@@ -2519,11 +2671,11 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        }
        
        const pedidoData = {
-         // Estructura basada en tu colección pedidosDisponibles1
+         // Estructura basada en tu colección pedidosDisponibles
          clave: clave,
          codigo: nombre || '',
          nombreCliente: nombre || '',
-         telefono: busquedaPorIdCliente ? telefono : (telefonoCompleto || telefono || ''), // Usar código original si se buscó por ID
+         telefono: telefonoParaPedido || '', // Usar el número completo del cliente encontrado
          telefonoCompleto: busquedaPorIdCliente ? telefonoCompletoCliente : telefonoCompleto, // Usar teléfono completo del cliente si se buscó por ID
          direccion: direccion || '',
          base: convertirNumeroABaseDisponible(base), // Nuevo campo base
@@ -2555,9 +2707,30 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          tipoEmpresa: tipoEmpresa // Nuevo campo para empresa/efectivo
        };
 
-       // Guardar en la colección "pedidosDisponibles1"
-       console.log('💾 Guardando pedido en pedidosDisponibles1:', pedidoData);
-       const docRef = await addDoc(collection(db, 'pedidosDisponibles1'), pedidoData);
+       // Verificar y registrar dirección en historial del cliente si es necesario
+       if (telefono && direccion && telefono.length >= 9 && telefono.length <= 10) {
+         console.log('🔍 VERIFICACIÓN DE DIRECCIÓN ACTIVADA - Tecla SUPRIMIR presionada');
+         console.log('🔍 Datos del formulario:', { telefono, direccion, coordenadas, sector });
+         const resultadoDireccion = await verificarYRegistrarDireccionEnHistorial(
+           telefono, 
+           direccion, 
+           coordenadas, 
+           sector || ''
+         );
+         console.log('📋 Resultado verificación dirección:', resultadoDireccion.mensaje);
+       } else {
+         console.log('⚠️ Verificación de dirección NO activada:', { 
+           telefono: telefono, 
+           direccion: direccion, 
+           telefonoLength: telefono?.length 
+         });
+       }
+
+       // Guardar en la colección "pedidosDisponibles"
+       console.log('💾 Guardando pedido en pedidosDisponibles:', pedidoData);
+       console.log('📱 Teléfono que se está guardando:', pedidoData.telefono);
+       console.log('📱 TelefonoCompleto que se está guardando:', pedidoData.telefonoCompleto);
+       const docRef = await addDoc(collection(db, 'pedidosDisponibles'), pedidoData);
        console.log('✅ Pedido guardado con ID:', docRef.id);
        
        // Actualizar el documento con su propio ID
@@ -2586,7 +2759,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        limpiarFormularioCompleto();
        
        // Registro silencioso - sin mostrar alert de éxito
-       console.log('✅ Pedido registrado silenciosamente en pedidosDisponibles1');
+       console.log('✅ Pedido registrado silenciosamente en pedidosDisponibles');
        // Actualizar contador de viajes registrados
        await actualizarContadorReporte('viajesRegistrados');
        // Actualizar contador de viajes manuales
@@ -2675,34 +2848,45 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        const fecha = new Date(); // Timestamp
        const clave = Math.random().toString(36).substring(2, 8).toUpperCase();
        
-       // Determinar el teléfono completo para WhatsApp
+       // Determinar el teléfono completo para WhatsApp y obtener datos del cliente
        let telefonoCompleto = telefono || '';
+       let telefonoParaPedido = telefono || ''; // Número que se usará en el campo telefono del pedido
+       
        if (telefono && telefono.length >= 9 && telefono.length <= 10) {
-         // Para celulares, buscar el cliente y obtener su prefijo
+         // Para celulares, SIEMPRE generar el número completo con código de país
+         console.log('🔍 Procesando teléfono celular (asignación directa):', telefono);
+         
+         // Generar el número completo usando la función concatenarTelefonoWhatsApp
+         telefonoCompleto = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
+         telefonoParaPedido = telefonoCompleto; // Usar el número completo para el pedido
+         
+         console.log('📱 Número completo generado (asignación directa):', telefonoCompleto);
+         console.log('📱 Número que se guardará en el pedido:', telefonoParaPedido);
+         
+         // Opcional: Buscar el cliente para obtener datos adicionales (pero no cambiar el teléfono)
          try {
-           // Intentar primero con telefonoCompleto (Ecuador por defecto)
-           const telefonoCompletoBusqueda = concatenarTelefonoWhatsApp(telefono, 'Ecuador');
-           let clienteRef = doc(db, 'clientestelefonos1', telefonoCompletoBusqueda);
-           let clienteSnapshot = await getDoc(clienteRef);
+           const qTelefono = query(
+             collection(db, 'clientestelefonos1'),
+             where('telefono', '==', telefono)
+           );
+           const snapshotTelefono = await getDocs(qTelefono);
            
-           if (clienteSnapshot.exists()) {
-             const clienteData = clienteSnapshot.data();
-             telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
-             console.log('📱 Teléfono completo para WhatsApp:', telefonoCompleto);
-           } else {
-             // Si no se encuentra, intentar con los últimos 9 dígitos (método anterior)
-             const telefonoBusqueda = telefono.slice(-9);
-             clienteRef = doc(db, 'clientestelefonos1', telefonoBusqueda);
-             clienteSnapshot = await getDoc(clienteRef);
+           if (!snapshotTelefono.empty) {
+             const clienteDoc = snapshotTelefono.docs[0];
+             const clienteData = clienteDoc.data();
+             console.log('📱 Cliente encontrado en clientestelefonos1 (asignación directa):', clienteData);
              
-             if (clienteSnapshot.exists()) {
-               const clienteData = clienteSnapshot.data();
-               telefonoCompleto = concatenarTelefonoWhatsApp(telefono, clienteData.prefijo || 'Ecuador');
-               console.log('📱 Teléfono completo para WhatsApp (fallback):', telefonoCompleto);
+             // Si el cliente tiene telefonoCompleto, usarlo en lugar del generado
+             if (clienteData.telefonoCompleto && clienteData.telefonoCompleto.length > 10) {
+               telefonoParaPedido = clienteData.telefonoCompleto;
+               telefonoCompleto = clienteData.telefonoCompleto;
+               console.log('📱 Usando telefonoCompleto del cliente (asignación directa):', telefonoParaPedido);
              }
+           } else {
+             console.log('📱 Cliente no encontrado, usando número generado (asignación directa)');
            }
          } catch (error) {
-           console.log('⚠️ No se pudo obtener el prefijo del cliente, usando teléfono original');
+           console.log('⚠️ Error al buscar cliente (asignación directa):', error);
          }
        }
        
@@ -2719,7 +2903,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
          clave: clave,
          codigo: nombre || '',
          nombreCliente: nombre || '',
-         telefono: busquedaPorIdCliente ? telefono : (telefonoCompleto || telefono || ''), // Usar código original si se buscó por ID
+         telefono: telefonoParaPedido || '', // Usar el número completo del cliente encontrado
          telefonoCompleto: busquedaPorIdCliente ? telefonoCompletoCliente : telefonoCompleto, // Usar teléfono completo del cliente si se buscó por ID
          direccion: direccion || '',
          base: convertirNumeroABase(base || '0'), // Nuevo campo base
@@ -2769,6 +2953,18 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         // Campo de autorización (pre-generado opcionalmente desde el botón de voucher o automáticamente para empresas)
         autorizacion: autorizacion
        };
+
+       // Verificar y registrar dirección en historial del cliente si es necesario
+       if (telefono && direccion && telefono.length >= 9 && telefono.length <= 10) {
+         console.log('🔍 Verificando dirección en historial del cliente (asignación directa)...');
+         const resultadoDireccion = await verificarYRegistrarDireccionEnHistorial(
+           telefono, 
+           direccion, 
+           coordenadas, 
+           sector || ''
+         );
+         console.log('📋 Resultado verificación dirección:', resultadoDireccion.mensaje);
+       }
 
        // Guardar directamente en la colección "pedidoEnCurso"
        const docRef = await addDoc(collection(db, 'pedidoEnCurso'), pedidoEnCursoData);
@@ -2893,7 +3089,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     if (!modalEditarCliente.pedido) return;
 
     try {
-      const pedidoRef = doc(db, 'pedidosDisponibles1', modalEditarCliente.pedido.id);
+      const pedidoRef = doc(db, 'pedidosDisponibles', modalEditarCliente.pedido.id);
       
       const datosActualizados = {
         nombreCliente: modalEditarCliente.nombreCliente.trim(),
@@ -2935,7 +3131,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     try {
       console.log('🔄 Iniciando sincronización de campos viajes...');
       
-      const colecciones = ['pedidosDisponibles1', 'pedidosDisponibles1', 'pedidoEnCurso'];
+      const colecciones = ['pedidosDisponibles', 'pedidosDisponibles', 'pedidoEnCurso'];
       let totalActualizados = 0;
 
       for (const coleccion of colecciones) {
@@ -3631,7 +3827,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           await setDoc(doc(db, rutaTodosLosViajes), viajeFinalizadoData);
           console.log('✅ Pedido guardado en todosLosViajes:', rutaTodosLosViajes);
 
-          // Eliminar de la colección original (pedidoEnCurso o pedidosDisponibles1)
+          // Eliminar de la colección original (pedidoEnCurso o pedidosDisponibles)
           console.log('🗑️ Eliminando pedido de:', coleccionInfo, 'ID:', pedidoInfo.id);
           await deleteDoc(pedidoRef);
           console.log('✅ Pedido eliminado exitosamente de:', coleccionInfo);
@@ -3890,10 +4086,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
     }
   };
 
-  // Generar autorización para pedido en 'pedidosDisponibles1'
+  // Generar autorización para pedido en 'pedidosDisponibles'
   const generarAutorizacionParaPedidoDisponible = async () => {
     try {
-      if (!modalAccionesPedido.pedido || modalAccionesPedido.coleccion !== 'pedidosDisponibles1') return;
+      if (!modalAccionesPedido.pedido || modalAccionesPedido.coleccion !== 'pedidosDisponibles') return;
       const pedido = modalAccionesPedido.pedido;
       // Evitar duplicados si ya existe
       if (pedido.autorizacion) {
@@ -3905,7 +4101,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
       const numeroAutorizacion = await obtenerSiguienteAutorizacion();
 
       // Guardar en el pedido disponible
-      const pedidoRef = doc(db, 'pedidosDisponibles1', pedido.id);
+      const pedidoRef = doc(db, 'pedidosDisponibles', pedido.id);
       await updateDoc(pedidoRef, { autorizacion: numeroAutorizacion });
 
       // Feedback y refresco local del modal
@@ -4077,8 +4273,8 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        const tokenConductor = conductorData.token || conductorData.fcmToken || conductorData.deviceToken || '';
        const tokenValido = validarTokenConductor(tokenConductor);
  
-       // 1. Obtener el pedido actual de pedidosDisponibles1
-       const pedidoOriginalRef = doc(db, 'pedidosDisponibles1', viajeId);
+       // 1. Obtener el pedido actual de pedidosDisponibles
+       const pedidoOriginalRef = doc(db, 'pedidosDisponibles', viajeId);
        const pedidoOriginalSnap = await getDoc(pedidoOriginalRef);
        
        if (!pedidoOriginalSnap.exists()) {
@@ -4138,7 +4334,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        
        await addDoc(collection(db, 'NotificaciOnenCurso'), notificacionEnCursoData);
 
-       // 5. Eliminar de pedidosDisponibles1
+       // 5. Eliminar de pedidosDisponibles
        await deleteDoc(pedidoOriginalRef);
 
        // Guardar en historial del cliente si hay dirección
@@ -4160,7 +4356,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
            tipo: 'manual',
            estadoRegistro: 'Registrado',
            modoRegistro: 'manual',
-           origen: 'pedidosDisponibles1' // Indicar de dónde viene
+           origen: 'pedidosDisponibles' // Indicar de dónde viene
          };
 
          await addDoc(collection(db, 'pedidosManuales'), pedidoManualData);
@@ -4235,13 +4431,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         }
       }
       
-      // Datos para inserción directa en pedidosDisponibles1
+      // Datos para inserción directa en pedidosDisponibles
       const pedidoData = {
         // Datos básicos del pedido
         clave: clave,
         codigo: nombre || '',
         nombreCliente: nombre || '',
-        telefono: busquedaPorIdCliente ? telefono : (telefonoCompleto || telefono || ''), // Usar código original si se buscó por ID
+        telefono: telefono || '', // Usar siempre el número tal como está en el campo
         telefonoCompleto: busquedaPorIdCliente ? telefonoCompletoCliente : telefonoCompleto, // Usar teléfono completo del cliente si se buscó por ID
         direccion: direccion || '',
         base: convertirNumeroABaseDisponible(base || '0'), // Nuevo campo base
@@ -4277,12 +4473,24 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
       };
 
-      // Inserción directa en la colección "pedidosDisponibles1"
-      const docRef = await addDoc(collection(db, 'pedidosDisponibles1'), pedidoData);
+      // Inserción directa en la colección "pedidosDisponibles"
+      const docRef = await addDoc(collection(db, 'pedidosDisponibles'), pedidoData);
       
       // Actualizar el documento con su propio ID
       await updateDoc(docRef, { id: docRef.id });
       
+      // Verificar y registrar dirección en historial del cliente si es necesario
+      if (telefono && direccion && telefono.length >= 9 && telefono.length <= 10) {
+        console.log('🔍 Verificando dirección en historial del cliente (aplicación)...');
+        const resultadoDireccion = await verificarYRegistrarDireccionEnHistorial(
+          telefono, 
+          direccion, 
+          coordenadas, 
+          sector || ''
+        );
+        console.log('📋 Resultado verificación dirección:', resultadoDireccion.mensaje);
+      }
+
       // Guardar en historial del cliente si hay dirección
       if (telefono && direccion) {
         await guardarEnHistorialCliente(telefono, direccion, coordenadas, 'aplicacion');
@@ -5759,7 +5967,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               Los pedidos aparecerán aquí cuando se registren desde el formulario
             </div>
             <div style={{ fontSize: 12, color: '#999', marginBottom: 10 }}>
-              Colección: pedidosDisponibles1
+              Colección: pedidosDisponibles
             </div>
             <button
               onClick={() => {
@@ -6008,7 +6216,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                            // Si no hay campo de fecha, mostrar guión
                            return '-';
                          } catch (error) {
-                           console.log('Error parsing fecha pedidosDisponibles1:', viaje, error);
+                           console.log('Error parsing fecha pedidosDisponibles:', viaje, error);
                            return '-';
                          }
                        })()}
@@ -6019,7 +6227,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                        color: '#1f2937',
                        width: '120px'
                      }}>
-                       {viaje.telefono || '-'}
+                       {viaje.telefonoCompleto || viaje.telefono || '-'}
                      </td>
                      <td style={{
                        padding: '12px 6px',
@@ -6033,10 +6241,10 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                            {viaje.coleccion && (
                              <span style={{
                                fontSize: '10px',
-                               color: viaje.coleccion === 'pedidosDisponibles1' ? '#10b981' : '#6b7280',
+                               color: viaje.coleccion === 'pedidosDisponibles' ? '#10b981' : '#6b7280',
                                fontWeight: 'bold'
                              }}>
-                               {viaje.coleccion === 'pedidosDisponibles1' ? '📊 DB1' : '📋 DB0'}
+                               {viaje.coleccion === 'pedidosDisponibles' ? '📊 DB1' : '📋 DB0'}
                              </span>
                            )}
                          </div>
@@ -6141,7 +6349,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                                  );
                                  if (direccionSeleccionada) {
                                    // Determinar la colección correcta según el origen del pedido
-                                   const coleccionNombre = viaje.coleccion || 'pedidosDisponibles1';
+                                   const coleccionNombre = viaje.coleccion || 'pedidosDisponibles';
                                    const pedidoRef = doc(db, coleccionNombre, viaje.id);
                                    updateDoc(pedidoRef, {
                                      direccion: direccionSeleccionada.direccion,
@@ -6175,7 +6383,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                                  const nuevaDireccion = prompt('Ingrese nueva dirección:');
                                  if (nuevaDireccion) {
                                    // Determinar la colección correcta según el origen del pedido
-                                   const coleccionNombre = viaje.coleccion || 'pedidosDisponibles1';
+                                   const coleccionNombre = viaje.coleccion || 'pedidosDisponibles';
                                    const pedidoRef = doc(db, coleccionNombre, viaje.id);
                                    updateDoc(pedidoRef, {
                                      direccion: nuevaDireccion,
@@ -6228,7 +6436,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                                      }
                                      
                                      // 4. Limpiar la dirección del pedido
-                                     const coleccionNombre = viaje.coleccion || 'pedidosDisponibles1';
+                                     const coleccionNombre = viaje.coleccion || 'pedidosDisponibles';
                                      const pedidoRef = doc(db, coleccionNombre, viaje.id);
                                      await updateDoc(pedidoRef, {
                                        direccion: '',
@@ -6382,7 +6590,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                       }}>
                         {(viaje.tiempo && viaje.numeroUnidad) ? (
                           <button
-                            onClick={() => abrirModalAccionesPedido(viaje, viaje.coleccion || 'pedidosDisponibles1')}
+                            onClick={() => abrirModalAccionesPedido(viaje, viaje.coleccion || 'pedidosDisponibles')}
                             style={{
                               padding: '4px 12px',
                               borderRadius: 20,
@@ -6407,7 +6615,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
                           </button>
                         ) : (
                           <button
-                            onClick={() => cancelarPedidoDirecto(viaje, viaje.coleccion || 'pedidosDisponibles1')}
+                            onClick={() => cancelarPedidoDirecto(viaje, viaje.coleccion || 'pedidosDisponibles')}
                             style={{
                               padding: '4px 12px',
                               borderRadius: 20,
@@ -7847,7 +8055,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
               )}
 
               {/* Botones para pedidos disponibles */}
-              {modalAccionesPedido.coleccion === 'pedidosDisponibles1' && (
+              {modalAccionesPedido.coleccion === 'pedidosDisponibles' && (
                 <>
                   {/* Mostrar autorización actual si existe */}
                   {modalAccionesPedido.pedido?.autorizacion && (
@@ -10497,10 +10705,10 @@ function ReportesContent() {
         if (totalPedidosActivos < 10) {
           console.log('📄 Cargando datos adicionales desde otras colecciones...');
           
-          // Cargar desde pedidosDisponibles1 como respaldo
+          // Cargar desde pedidosDisponibles como respaldo
           try {
-            const pedidosDisponibles1Ref = collection(db, 'pedidosDisponibles1');
-            const pedidosSnapshot = await getDocs(pedidosDisponibles1Ref);
+            const pedidosDisponiblesRef = collection(db, 'pedidosDisponibles');
+            const pedidosSnapshot = await getDocs(pedidosDisponiblesRef);
             
             pedidosSnapshot.forEach((doc) => {
               const viaje = doc.data();
@@ -10532,7 +10740,7 @@ function ReportesContent() {
               }
             });
           } catch (error) {
-            console.log('⚠️ Error al cargar pedidosDisponibles1:', error.message);
+            console.log('⚠️ Error al cargar pedidosDisponibles:', error.message);
           }
           
           // Cargar desde pedidoEnCurso como respaldo
@@ -12890,6 +13098,8 @@ function MainContent({ activeSection, operadorAutenticado, setOperadorAutenticad
 
       case 'conductores':
         return <ConductoresContent />;
+      case 'mapa-conductores':
+        return <DriverTracking />;
       case 'reportes':
         return <ReportesContent />;
       case 'operadores':
