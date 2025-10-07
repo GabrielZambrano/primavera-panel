@@ -1674,8 +1674,6 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         const telefonoCliente = clienteData.telefono || '';
         const ultimos7Cliente = telefonoCliente.slice(-7);
         
-        console.log('📱 Comparando:', ultimos7Digitos, 'vs', ultimos7Cliente, 'del cliente:', telefonoCliente);
-        
         if (ultimos7Cliente === ultimos7Digitos) {
           console.log('✅ Cliente encontrado por últimos 7 dígitos:', clienteData);
         
@@ -2967,54 +2965,20 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        }
 
        // Guardar directamente en la colección "pedidoEnCurso"
+       console.log('💾 Guardando pedido en pedidoEnCurso...');
        const docRef = await addDoc(collection(db, 'pedidoEnCurso'), pedidoEnCursoData);
        
        // Actualizar el documento con su propio ID
        await updateDoc(docRef, { id: docRef.id });
+       console.log('✅ Pedido guardado con ID:', docRef.id);
 
-      // Si se usó un número de autorización pre-generado, desactivarlo para evitar reutilización accidental
-      try {
-        if (preRegistroVoucher?.activo) {
-          setPreRegistroVoucher({ numeroAutorizacion: null, activo: false });
-        }
-      } catch (error) {
-        console.error('❌ Error al manejar autorización:', error);
-      }
-       
-       // Crear duplicado en la colección "NotificaciOnenCurso" para sistema de notificaciones
-       const notificacionEnCursoData = {
-         ...pedidoEnCursoData,
-         id: docRef.id, // Mantener el mismo ID del documento original para referencia
-         fechaNotificacion: new Date(), // Fecha específica para la notificación
-         estadoNotificacion: 'pendiente' // Estado de la notificación (pendiente, enviada, fallida)
-       };
-       
-       await addDoc(collection(db, 'NotificaciOnenCurso'), notificacionEnCursoData);
-       
-       // Guardar en historial del cliente si hay dirección
-       if (telefono && direccion) {
-         await guardarEnHistorialCliente(telefono, direccion, coordenadas, 'manual');
+       // Si se usó un número de autorización pre-generado, desactivarlo para evitar reutilización accidental
+       if (preRegistroVoucher?.activo) {
+         setPreRegistroVoucher({ numeroAutorizacion: null, activo: false });
        }
 
-       // Registrar automáticamente en la colección de pedidos manuales
-       try {
-         const pedidoManualData = {
-           ...pedidoEnCursoData,
-           idOriginal: docRef.id, // Referencia al documento original
-           fechaRegistro: new Date(),
-           tipo: 'manual',
-           estadoRegistro: 'Registrado',
-           modoRegistro: 'manual'
-         };
-
-         await addDoc(collection(db, 'pedidosManuales'), pedidoManualData);
-         console.log('✅ Pedido manual registrado en colección separada');
-       } catch (error) {
-         console.error('❌ Error al registrar pedido manual:', error);
-         // No fallar si no se puede registrar en la colección separada
-       }
-       
-       // Los listeners en tiempo real actualizarán automáticamente las tablas
+       // Finalizar inmediatamente después de la inserción principal
+       setInsertandoRegistro(false);
        
        // Ocultar el mapa después del registro exitoso
        setMapaVisible(false);
@@ -3025,10 +2989,48 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
        // Registro silencioso - sin mostrar alert de éxito
        console.log(`✅ Pedido registrado silenciosamente en "En Curso" - Conductor: ${conductorData.nombre}, Unidad: ${unidad}`);
        
-       // Actualizar contador de viajes registrados
-       await actualizarContadorReporte('viajesRegistrados');
-       // Actualizar contador de viajes manuales (porque se registró manualmente)
-       await actualizarContadorReporte('viajesManuales');
+       // Crear duplicado en la colección "NotificaciOnenCurso" para sistema de notificaciones (asíncrono)
+       const notificacionEnCursoData = {
+         ...pedidoEnCursoData,
+         id: docRef.id,
+         fechaNotificacion: new Date(),
+         estadoNotificacion: 'pendiente'
+       };
+       
+       // Ejecutar notificación en paralelo sin bloquear la respuesta
+       addDoc(collection(db, 'NotificaciOnenCurso'), notificacionEnCursoData)
+         .then(() => console.log('✅ Notificación en curso creada'))
+         .catch(error => console.error('❌ Error al crear notificación:', error));
+       
+       // Guardar en historial del cliente si hay dirección (asíncrono)
+       if (telefono && direccion) {
+         guardarEnHistorialCliente(telefono, direccion, coordenadas, 'manual')
+           .then(() => console.log('✅ Historial del cliente actualizado'))
+           .catch(error => console.error('❌ Error al actualizar historial:', error));
+       }
+
+       // Registrar automáticamente en la colección de pedidos manuales (asíncrono)
+       const pedidoManualData = {
+         ...pedidoEnCursoData,
+         idOriginal: docRef.id,
+         fechaRegistro: new Date(),
+         tipo: 'manual',
+         estadoRegistro: 'Registrado',
+         modoRegistro: 'manual'
+       };
+
+       addDoc(collection(db, 'pedidosManuales'), pedidoManualData)
+         .then(() => console.log('✅ Pedido manual registrado en colección separada'))
+         .catch(error => console.error('❌ Error al registrar pedido manual:', error));
+       
+       // Los listeners en tiempo real actualizarán automáticamente las tablas
+       
+       // Actualizar contadores en paralelo sin bloquear la respuesta
+       Promise.all([
+         actualizarContadorReporte('viajesRegistrados'),
+         actualizarContadorReporte('viajesManuales')
+       ]).then(() => console.log('✅ Contadores actualizados'))
+         .catch(error => console.error('❌ Error al actualizar contadores:', error));
        
        // Resetear empresa a "Efectivo" después de enviar exitosamente
        if (tipoEmpresa !== 'Efectivo') {
