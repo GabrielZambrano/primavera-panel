@@ -18,9 +18,6 @@
 .env.test.local
 .env.production.local
 
-# Firebase config (contiene credenciales sensibles)
-src/firebaseConfig.js
-
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
