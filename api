@@ -1,0 +1,5 @@
+[33m134178d[m[33m ([m[1;36mHEAD -> [m[1;32mmaster[m[33m, [m[1;31morigin/master[m[33m)[m Correcciones finales: validación base 01-13, error longitud undefined, input unidad solo ENTER
+[33m28616e4[m Merge pull request #1 from GabrielZambrano/main
+[33m78ebf0a[m[33m ([m[1;31morigin/main[m[33m, [m[1;32mmain[m[33m)[m Primer commit - subiendo proyecto inicial
+[33m0cefc14[m Actualizaciones del sistema de turismo: eliminación de duplicación de pedidos, preservación de puerto, formato de fecha como cadena, menú WhatsApp, eliminación de botones de autorización y voucher
+[33m5398c4f[m Implementar funcionalidad de edicion de vouchers y filtros mejorados
