@@ -5,6 +5,7 @@ import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage
 import { db, storage } from "../firebaseConfig";
 import * as XLSX from 'xlsx';
 import DriverTracking from './DriverTracking';
+import ReporteViajes from './ReporteViajes';
 
 // import axios from 'axios'; // Comentado porque no se usa
 
@@ -13626,6 +13627,12 @@ function MainContent({ activeSection, operadorAutenticado, setOperadorAutenticad
         return <DriverTracking />;
       case 'reportes':
         return <ReportesContent />;
+      case 'pedidos-archivados':
+        return (
+          <div style={{ padding: '2rem' }}>
+            <ReporteViajes />
+          </div>
+        );
       case 'operadores':
         return <OperadoresContent />;
       case 'vouchers':

@@ -6,6 +6,7 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
     { id: 'conductores', label: 'Conductores', icon: '👨‍💼' },
     { id: 'mapa-conductores', label: 'Mapa Conductores', icon: '🗺️' },
     { id: 'reportes', label: 'Reportes', icon: '📈' },
+    { id: 'pedidos-archivados', label: 'Reporte Unidades', icon: '📋' },
     { id: 'operadores', label: 'Operadores', icon: '👥' },
     { id: 'whatsapp1', label: 'Whatsapp1', icon: '💬' }
   ];

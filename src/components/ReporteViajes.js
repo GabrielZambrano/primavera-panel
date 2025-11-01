@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { collection, addDoc, serverTimestamp, getDocs } from 'firebase/firestore';
+import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
+import * as XLSX from 'xlsx';
 
 function obtenerFechaActual() {
   const fecha = new Date();
@@ -12,41 +13,240 @@ function obtenerFechaActual() {
 
 function ReporteViajes() {
   const [viajes, setViajes] = useState([]);
-  const [mensaje, setMensaje] = useState('');
-  const [modalVisible, setModalVisible] = useState(false);
-  const [selectedViaje, setSelectedViaje] = useState(null);
+  const [reportePorUnidad, setReportePorUnidad] = useState([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError] = useState(null);
   const [resumen, setResumen] = useState({ aceptados: 0, manuales: 0 });
+  const [fechaInicio, setFechaInicio] = useState('');
+  const [fechaFin, setFechaFin] = useState('');
+
+  // Establecer fechas por defecto (últimos 30 días)
+  useEffect(() => {
+    const hoy = new Date();
+    const hace30Dias = new Date();
+    hace30Dias.setDate(hace30Dias.getDate() - 30);
+    
+    const formatoFecha = (fecha) => {
+      const año = fecha.getFullYear();
+      const mes = String(fecha.getMonth() + 1).padStart(2, '0');
+      const dia = String(fecha.getDate()).padStart(2, '0');
+      return `${año}-${mes}-${dia}`;
+    };
+    
+    setFechaInicio(formatoFecha(hace30Dias));
+    setFechaFin(formatoFecha(hoy));
+  }, []);
 
   useEffect(() => {
-    cargarViajes();
-  }, []);
+    if (fechaInicio && fechaFin) {
+      cargarViajes();
+    }
+  }, [fechaInicio, fechaFin]);
+
+  // Helper para formatear fecha desde timestamp de Firebase
+  const formatearFecha = (timestamp) => {
+    if (!timestamp) return '—';
+    
+    try {
+      // Si es un timestamp de Firebase
+      if (timestamp.toDate) {
+        const fecha = timestamp.toDate();
+        const dia = fecha.getDate().toString().padStart(2, '0');
+        const mes = (fecha.getMonth() + 1).toString().padStart(2, '0');
+        const año = fecha.getFullYear();
+        const horas = fecha.getHours().toString().padStart(2, '0');
+        const minutos = fecha.getMinutes().toString().padStart(2, '0');
+        return `${dia}/${mes}/${año} ${horas}:${minutos}`;
+      }
+      
+      // Si es un string o número
+      if (typeof timestamp === 'string' || typeof timestamp === 'number') {
+        const fecha = new Date(timestamp);
+        if (!isNaN(fecha.getTime())) {
+          const dia = fecha.getDate().toString().padStart(2, '0');
+          const mes = (fecha.getMonth() + 1).toString().padStart(2, '0');
+          const año = fecha.getFullYear();
+          const horas = fecha.getHours().toString().padStart(2, '0');
+          const minutos = fecha.getMinutes().toString().padStart(2, '0');
+          return `${dia}/${mes}/${año} ${horas}:${minutos}`;
+        }
+      }
+      
+      return timestamp.toString();
+    } catch (error) {
+      console.error('Error al formatear fecha:', error);
+      return '—';
+    }
+  };
+
+  // Helper para obtener la fecha del viaje (prioridad: fechaCreacion, fecha, fechaFinalizacion)
+  const obtenerFechaViaje = (v) => {
+    return v?.fechaCreacion || v?.fecha || v?.fechaFinalizacion || v?.createdAt || '';
+  };
+
+  // Helper para obtener teléfono (prioridad: telefono, telefonoCompleto)
+  const obtenerTelefono = (v) => {
+    return v?.telefono || v?.telefonoCompleto || '—';
+  };
+
+  // Helper para obtener unidad (prioridad: unidad, numeroUnidad)
+  const obtenerUnidad = (v) => {
+    return v?.unidad || v?.numeroUnidad || '—';
+  };
+
+  // Helper para obtener nombre del conductor (prioridad: nombreConductor, nombre)
+  const obtenerNombreConductor = (v) => {
+    return v?.nombreConductor || v?.nombre || '—';
+  };
+
+  // Helper para verificar si una fecha está en el rango
+  const fechaEnRango = (fechaViaje, fechaInicio, fechaFin) => {
+    if (!fechaViaje) return false;
+    
+    try {
+      let fechaObj;
+      if (fechaViaje.toDate) {
+        fechaObj = fechaViaje.toDate();
+      } else if (typeof fechaViaje === 'string' || typeof fechaViaje === 'number') {
+        fechaObj = new Date(fechaViaje);
+      } else {
+        return false;
+      }
+      
+      const inicio = new Date(fechaInicio + 'T00:00:00');
+      const fin = new Date(fechaFin + 'T23:59:59');
+      
+      return fechaObj >= inicio && fechaObj <= fin;
+    } catch (error) {
+      return false;
+    }
+  };
 
   const cargarViajes = async () => {
     try {
       setCargando(true);
       setError(null);
-      const fechaActual = obtenerFechaActual();
       
-      // Cargar viajes de la colección todosLosViajes
-      const viajesRef = collection(db, 'todosLosViajes', fechaActual, 'viajes');
+      if (!fechaInicio || !fechaFin) {
+        setCargando(false);
+        return;
+      }
+      
+      // Cargar viajes de la colección pedidosarchivados
+      const viajesRef = collection(db, 'pedidosarchivados');
       const viajesSnapshot = await getDocs(viajesRef);
       
       const viajesCargados = [];
       viajesSnapshot.forEach((doc) => {
         const viajeData = doc.data();
-        viajesCargados.push({
-          id: doc.id,
-          ...viajeData
+        const fechaViaje = obtenerFechaViaje(viajeData);
+        
+        // Filtrar por rango de fechas
+        if (fechaEnRango(fechaViaje, fechaInicio, fechaFin)) {
+          viajesCargados.push({
+            id: doc.id,
+            ...viajeData
+          });
+        }
+      });
+
+      // Ordenar por fecha de creación (más recientes primero)
+      viajesCargados.sort((a, b) => {
+        const fechaA = obtenerFechaViaje(a);
+        const fechaB = obtenerFechaViaje(b);
+        
+        if (!fechaA && !fechaB) return 0;
+        if (!fechaA) return 1;
+        if (!fechaB) return -1;
+        
+        try {
+          const timestampA = fechaA.toDate ? fechaA.toDate() : new Date(fechaA);
+          const timestampB = fechaB.toDate ? fechaB.toDate() : new Date(fechaB);
+          return timestampB - timestampA; // Más recientes primero
+        } catch (error) {
+          return 0;
+        }
+      });
+
+      // Filtrar viajes que no tienen unidad
+      const viajesConUnidad = viajesCargados.filter(v => {
+        const unidad = obtenerUnidad(v);
+        return unidad && unidad !== '—' && unidad !== '';
+      });
+
+      // Agrupar por unidad y contar carreras, incluyendo nombre del conductor
+      const unidadesMap = new Map();
+      
+      viajesConUnidad.forEach(v => {
+        const unidad = obtenerUnidad(v);
+        const nombreConductor = obtenerNombreConductor(v);
+        
+        if (unidad && unidad !== '—' && unidad !== '') {
+          if (unidadesMap.has(unidad)) {
+            const datosUnidad = unidadesMap.get(unidad);
+            unidadesMap.set(unidad, {
+              cantidad: datosUnidad.cantidad + 1,
+              conductor: nombreConductor !== '—' ? nombreConductor : datosUnidad.conductor,
+              viajes: [...datosUnidad.viajes, v]
+            });
+          } else {
+            unidadesMap.set(unidad, {
+              cantidad: 1,
+              conductor: nombreConductor,
+              viajes: [v]
+            });
+          }
+        }
+      });
+
+      // Convertir el Map a un array con detalles de cada viaje por unidad
+      const reporteConDetalles = [];
+      
+      unidadesMap.forEach((datos, unidad) => {
+        // Para cada unidad, crear un registro por cada viaje
+        datos.viajes.forEach(viaje => {
+          reporteConDetalles.push({
+            unidad: unidad,
+            conductor: obtenerNombreConductor(viaje),
+            fecha: formatearFecha(obtenerFechaViaje(viaje))
+          });
         });
       });
 
+      // Agrupar para mostrar resumen (unidad, conductor más frecuente, cantidad)
+      const resumenUnidades = Array.from(unidadesMap.entries())
+        .map(([unidad, datos]) => {
+          // Encontrar el conductor más frecuente
+          const conductoresFreq = new Map();
+          datos.viajes.forEach(v => {
+            const conductor = obtenerNombreConductor(v);
+            if (conductor && conductor !== '—') {
+              conductoresFreq.set(conductor, (conductoresFreq.get(conductor) || 0) + 1);
+            }
+          });
+          
+          let conductorPrincipal = datos.conductor;
+          if (conductoresFreq.size > 0) {
+            const conductorMasFrecuente = Array.from(conductoresFreq.entries())
+              .sort((a, b) => b[1] - a[1])[0][0];
+            conductorPrincipal = conductorMasFrecuente;
+          }
+
+          return {
+            unidad,
+            cantidad: datos.cantidad,
+            conductor: conductorPrincipal,
+            viajes: datos.viajes
+          };
+        })
+        .sort((a, b) => b.cantidad - a.cantidad);
+
       // Actualizar resumen
-      const aceptados = viajesCargados.filter(v => v.estado === 'Aceptado' || v.estado === 'Finalizado').length;
-      const manuales = viajesCargados.filter(v => (v.tipoPedido || '').toLowerCase().includes('manual')).length;
+      const aceptados = viajesConUnidad.filter(v => v.estado === 'Aceptado' || v.estado === 'Finalizado' || v.estado === 'finalizado').length;
+      const manuales = viajesConUnidad.filter(v => (v.tipoPedido || '').toLowerCase().includes('manual')).length;
       
-      setViajes(viajesCargados);
+      setViajes(viajesConUnidad);
+      setReportePorUnidad(resumenUnidades);
       setResumen({ aceptados, manuales });
       
     } catch (error) {
@@ -57,24 +257,6 @@ function ReporteViajes() {
     }
   };
   
-  const enviarMensaje = async (unidad, mensaje) => {
-    try {
-      await addDoc(collection(db, 'mensajesConductor'), {
-        unidad,
-        mensaje,
-        fecha: serverTimestamp(),
-        leido: false
-      });
-      
-      alert('Mensaje enviado exitosamente');
-      setMensaje('');
-      setModalVisible(false);
-      setSelectedViaje(null);
-    } catch (error) {
-      console.error('Error al enviar mensaje:', error);
-      alert('Error al enviar el mensaje: ' + error.message);
-    }
-  };
 
   // Helpers: obtener calificación, comentario y operadora tolerando variantes
   const getRating = (v) => {
@@ -94,9 +276,122 @@ function ReporteViajes() {
   const getOperador = (v) =>
     (v?.operador && (v.operador.nombre || v.operador.name)) || v?.operadora || v?.operador || v?.operator || v?.atendidoPor || '';
 
+  const exportarAExcel = () => {
+    try {
+      const headers = ['Unidad', 'Conductor', 'Cantidad de Carreras'];
+      
+      const rows = reportePorUnidad.map(item => [
+        item.unidad,
+        item.conductor,
+        item.cantidad
+      ]);
+
+      const excelData = [headers, ...rows];
+
+      // Crear workbook y worksheet
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.aoa_to_sheet(excelData);
+      
+      // Ajustar ancho de columnas
+      ws['!cols'] = [
+        { wch: 15 }, // Unidad
+        { wch: 30 }, // Conductor
+        { wch: 20 }  // Cantidad de Carreras
+      ];
+      
+      // Agregar worksheet al workbook
+      XLSX.utils.book_append_sheet(wb, ws, 'Reporte por Unidad');
+      
+      // Generar archivo XLSX
+      const xlsxBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+      const blob = new Blob([xlsxBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      
+      // Descargar archivo
+      const link = document.createElement('a');
+      const url = URL.createObjectURL(blob);
+      link.href = url;
+      const hoyISO = new Date().toISOString().split('T')[0];
+      link.download = `reporte_carreras_por_unidad_${hoyISO}.xlsx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+      
+      console.log('✅ Excel exportado exitosamente');
+    } catch (error) {
+      console.error('❌ Error al exportar Excel:', error);
+      alert('Error al exportar el Excel: ' + error.message);
+    }
+  };
+
   return (
     <div className="reporte-viajes">
-      <h2>📋 Resumen de Viajes</h2>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
+        <h2 style={{ margin: 0 }}>📋 Reporte Unidades</h2>
+        <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          {/* Filtro de fechas */}
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <label style={{ fontSize: '14px', fontWeight: 'bold', color: '#374151' }}>Desde:</label>
+            <input
+              type="date"
+              value={fechaInicio}
+              onChange={(e) => setFechaInicio(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '14px',
+                cursor: 'pointer'
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <label style={{ fontSize: '14px', fontWeight: 'bold', color: '#374151' }}>Hasta:</label>
+            <input
+              type="date"
+              value={fechaFin}
+              onChange={(e) => setFechaFin(e.target.value)}
+              style={{
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '14px',
+                cursor: 'pointer'
+              }}
+            />
+          </div>
+          <button
+            onClick={exportarAExcel}
+            disabled={reportePorUnidad.length === 0 || cargando}
+            style={{
+              background: reportePorUnidad.length === 0 || cargando ? '#9ca3af' : '#10b981',
+              color: 'white',
+              padding: '10px 20px',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: reportePorUnidad.length === 0 || cargando ? 'not-allowed' : 'pointer',
+              fontSize: '14px',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'background 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              if (reportePorUnidad.length > 0 && !cargando) {
+                e.target.style.background = '#059669';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (reportePorUnidad.length > 0 && !cargando) {
+                e.target.style.background = '#10b981';
+              }
+            }}
+          >
+            📥 Exportar a Excel
+          </button>
+        </div>
+      </div>
       
       {error && (
         <div style={{ 
@@ -120,16 +415,7 @@ function ReporteViajes() {
         </div>
       ) : (
         <>
-          <div className="resumen-boxes" style={{ display: 'flex', gap: '1rem', marginBottom: '1rem' }}>
-            <div style={{ background: '#e3fcec', padding: '1rem', borderRadius: '8px' }}>
-              <strong>Aceptados:</strong> {resumen.aceptados}
-            </div>
-            <div style={{ background: '#fff3cd', padding: '1rem', borderRadius: '8px' }}>
-              <strong>Manual:</strong> {resumen.manuales}
-            </div>
-          </div>
-          
-          {viajes.length === 0 ? (
+          {reportePorUnidad.length === 0 ? (
             <div style={{
               textAlign: 'center',
               padding: '3rem',
@@ -137,149 +423,89 @@ function ReporteViajes() {
               borderRadius: '8px',
               color: '#6b7280'
             }}>
-              No hay viajes para mostrar
+              No hay datos para mostrar
             </div>
           ) : (
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: '#f5f5f5' }}>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Fecha</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Teléfono</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Dirección</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Sector</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Modo Selección</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Nombre</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Cliente</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Operador</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Tipo Pedido</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Unidad</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Valor</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Modo Asignación</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Calificación</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Comentario</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Estado</th>
-                  <th style={{ padding: '12px', textAlign: 'left' }}>Acciones</th>
-                </tr>
-              </thead>
-              <tbody>
-                {viajes.map((v, idx) => (
-                  <tr key={idx} style={{ borderBottom: '1px solid #eee' }}>
-                    <td style={{ padding: '12px' }}>{v.fecha}</td>
-                    <td style={{ padding: '12px' }}>{v.telefono}</td>
-                    <td style={{ padding: '12px' }}>{v.direccion}</td>
-                    <td style={{ padding: '12px' }}>{v.sector}</td>
-                    <td style={{ padding: '12px' }}>{v.modoSeleccion}</td>
-                    <td style={{ padding: '12px' }}>{v.nombre}</td>
-                    <td style={{ padding: '12px' }}>{v.nombreCliente}</td>
-                    <td style={{ padding: '12px' }}>{getOperador(v) || '—'}</td>
-                    <td style={{ padding: '12px' }}>{v.tipoPedido}</td>
-                    <td style={{ padding: '12px' }}>{v.unidad}</td>
-                    <td style={{ padding: '12px' }}>{v.valor}</td>
-                    <td style={{ padding: '12px' }}>{v.modoAsignacion}</td>
-                    <td style={{ padding: '12px' }}>{getRating(v) || '—'}</td>
-                    <td style={{ padding: '12px', maxWidth: 360, wordBreak: 'break-word' }}>{getComment(v) || '—'}</td>
-                    <td style={{ padding: '12px' }}>{v.estado}</td>
-                    <td style={{ padding: '12px' }}>
-                      <button
-                        onClick={() => {
-                          setSelectedViaje(v);
-                          setModalVisible(true);
-                        }}
-                        style={{
-                          background: '#4CAF50',
+            <div style={{
+              background: 'white',
+              borderRadius: '8px',
+              border: '1px solid #e5e7eb',
+              overflow: 'hidden',
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+            }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                <thead>
+                  <tr style={{ background: '#f5f5f5' }}>
+                    <th style={{ padding: '15px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Unidad</th>
+                    <th style={{ padding: '15px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Conductor</th>
+                    <th style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Cantidad de Carreras</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reportePorUnidad.map((item, idx) => (
+                    <tr key={item.unidad} style={{ 
+                      borderBottom: '1px solid #e5e7eb',
+                      backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f9fafb',
+                      transition: 'background 0.2s'
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
+                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#ffffff' : '#f9fafb'}>
+                      <td style={{ padding: '15px', fontWeight: 'bold', fontSize: '16px', color: '#1f2937' }}>
+                        {item.unidad}
+                      </td>
+                      <td style={{ padding: '15px', color: '#374151', fontSize: '15px' }}>
+                        {item.conductor || '—'}
+                      </td>
+                      <td style={{ padding: '15px', textAlign: 'center' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          background: '#3b82f6',
                           color: 'white',
-                          padding: '8px 12px',
-                          border: 'none',
-                          borderRadius: '4px',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        ✉️ Enviar Mensaje
-                      </button>
+                          padding: '8px 16px',
+                          borderRadius: '20px',
+                          fontSize: '16px',
+                          fontWeight: 'bold',
+                          minWidth: '50px'
+                        }}>
+                          {item.cantidad}
+                        </span>
+                      </td>
+                    </tr>
+                  ))}
+                  {/* Fila de total */}
+                  <tr style={{ 
+                    background: '#f5f5f5',
+                    borderTop: '2px solid #e5e7eb',
+                    fontWeight: 'bold'
+                  }}>
+                    <td style={{ padding: '15px', fontSize: '16px', color: '#1f2937' }}>
+                      TOTAL
+                    </td>
+                    <td style={{ padding: '15px', fontSize: '16px', color: '#1f2937' }}>
+                      —
+                    </td>
+                    <td style={{ padding: '15px', textAlign: 'center' }}>
+                      <span style={{
+                        display: 'inline-block',
+                        background: '#10b981',
+                        color: 'white',
+                        padding: '8px 16px',
+                        borderRadius: '20px',
+                        fontSize: '16px',
+                        fontWeight: 'bold',
+                        minWidth: '50px'
+                      }}>
+                        {reportePorUnidad.reduce((sum, item) => sum + item.cantidad, 0)}
+                      </span>
                     </td>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </tbody>
+              </table>
+            </div>
           )}
         </>
       )}
 
-      {/* Modal para enviar mensaje */}
-      {modalVisible && selectedViaje && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.5)',
-          display: 'flex',
-          justifyContent: 'center',
-          alignItems: 'center',
-          zIndex: 1000
-        }}>
-          <div style={{
-            background: 'white',
-            padding: '20px',
-            borderRadius: '8px',
-            width: '90%',
-            maxWidth: '500px'
-          }}>
-            <h3 style={{ marginTop: 0 }}>Enviar Mensaje al Conductor</h3>
-            <p><strong>Unidad:</strong> {selectedViaje.unidad}</p>
-            <p><strong>Conductor:</strong> {selectedViaje.nombre}</p>
-            <p><strong>Tipo de Viaje:</strong> {selectedViaje.tipoPedido}</p>
-            
-            <textarea
-              value={mensaje}
-              onChange={(e) => setMensaje(e.target.value)}
-              placeholder="Escriba su mensaje aquí..."
-              style={{
-                width: '100%',
-                minHeight: '100px',
-                marginBottom: '15px',
-                padding: '8px',
-                borderRadius: '4px',
-                border: '1px solid #ccc'
-              }}
-            />
-            
-            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
-              <button
-                onClick={() => {
-                  setModalVisible(false);
-                  setMensaje('');
-                  setSelectedViaje(null);
-                }}
-                style={{
-                  padding: '8px 16px',
-                  border: '1px solid #ccc',
-                  borderRadius: '4px',
-                  background: 'white',
-                  cursor: 'pointer'
-                }}
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => enviarMensaje(selectedViaje.unidad, mensaje)}
-                style={{
-                  padding: '8px 16px',
-                  background: '#4CAF50',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer'
-                }}
-                disabled={!mensaje.trim()}
-              >
-                Enviar Mensaje
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
