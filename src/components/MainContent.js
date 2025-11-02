@@ -3316,19 +3316,20 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         ...modalAccionesPedido.pedido,
         estado: 'Cancelado por Cliente',
         fechaCancelacion: fechaActual,
+        fechaCreacion: fechaActual,
         motivoCancelacion: 'Cancelado por el cliente',
         fechaRegistroCancelacion: fechaActual,
-        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        docIdOriginal: modalAccionesPedido.pedido.id
       };
 
-      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
-      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+      // Guardar en pedidosarchivados
+      await setDoc(doc(db, 'pedidosarchivados', modalAccionesPedido.pedido.id), viajeCanceladoData);
 
       // Eliminar el documento original de la colección
       await deleteDoc(pedidoRef);
 
-      console.log('✅ Pedido cancelado por cliente, guardado en todosLosViajes y eliminado de la colección original');
+      console.log('✅ Pedido cancelado por cliente, guardado en pedidosarchivados y eliminado de la colección original');
       
       // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
@@ -3516,19 +3517,20 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         ...modalAccionesPedido.pedido,
         estado: 'Cancelado por Unidad',
         fechaCancelacion: fechaActual,
+        fechaCreacion: fechaActual,
         motivoCancelacion: 'Cancelado por la unidad',
         fechaRegistroCancelacion: fechaActual,
-        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        docIdOriginal: modalAccionesPedido.pedido.id
       };
 
-      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
-      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+      // Guardar en pedidosarchivados
+      await setDoc(doc(db, 'pedidosarchivados', modalAccionesPedido.pedido.id), viajeCanceladoData);
 
       // Eliminar el documento original de la colección
       await deleteDoc(pedidoRef);
 
-      console.log('✅ Pedido cancelado por unidad, guardado en todosLosViajes y eliminado de la colección original');
+      console.log('✅ Pedido cancelado por unidad, guardado en pedidosarchivados y eliminado de la colección original');
       
       // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
@@ -3892,6 +3894,7 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             estado: 'Finalizado con Voucher',
             fechaFinalizacion: fechaActual,
             fechaRegistroFinalizacion: fechaActual,
+            fechaCreacion: fechaActual,
             motivoFinalizacion: 'Voucher corporativo generado',
             numeroAutorizacionVoucher: numeroAutorizacion,
             voucherData: {
@@ -3901,13 +3904,13 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
             },
             esVoucher: true,
             colorFondo: '#fef3c7', // Color de fondo amarillo para vouchers
-            operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+            operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+            docIdOriginal: pedidoInfo.id
           };
 
-          // Guardar en todosLosViajes
-          const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${pedidoInfo.id}`;
-          await setDoc(doc(db, rutaTodosLosViajes), viajeFinalizadoData);
-          console.log('✅ Pedido guardado en todosLosViajes:', rutaTodosLosViajes);
+          // Guardar en pedidosarchivados
+          await setDoc(doc(db, 'pedidosarchivados', pedidoInfo.id), viajeFinalizadoData);
+          console.log('✅ Pedido guardado en pedidosarchivados:', pedidoInfo.id);
 
           // Eliminar de la colección original (pedidoEnCurso o pedidosDisponibles)
           console.log('🗑️ Eliminando pedido de:', coleccionInfo, 'ID:', pedidoInfo.id);
@@ -3991,19 +3994,20 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         ...pedido,
         estado: 'Cancelado por Cliente Sin Asignar',
         fechaCancelacion: fechaActual,
+        fechaCreacion: fechaActual,
         motivoCancelacion: 'Cancelado por el cliente sin asignar unidad',
         fechaRegistroCancelacion: fechaActual,
-        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        docIdOriginal: pedido.id
       };
 
-      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${pedido.id}`;
-      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+      // Guardar en pedidosarchivados
+      await setDoc(doc(db, 'pedidosarchivados', pedido.id), viajeCanceladoData);
 
       // Eliminar el documento original de la colección
       await deleteDoc(pedidoRef);
 
-      console.log('✅ Pedido cancelado sin asignar directamente');
+      console.log('✅ Pedido cancelado sin asignar, guardado en pedidosarchivados');
       
       // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
@@ -4045,19 +4049,20 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         ...modalAccionesPedido.pedido,
         estado: 'Cancelado por Cliente Sin Asignar',
         fechaCancelacion: fechaActual,
+        fechaCreacion: fechaActual,
         motivoCancelacion: 'Cancelado por el cliente sin asignar unidad',
         fechaRegistroCancelacion: fechaActual,
-        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        docIdOriginal: modalAccionesPedido.pedido.id
       };
 
-      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
-      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+      // Guardar en pedidosarchivados
+      await setDoc(doc(db, 'pedidosarchivados', modalAccionesPedido.pedido.id), viajeCanceladoData);
 
       // Eliminar el documento original de la colección
       await deleteDoc(pedidoRef);
 
-      console.log('✅ Pedido cancelado sin asignar, guardado en todosLosViajes y eliminado de la colección original');
+      console.log('✅ Pedido cancelado sin asignar, guardado en pedidosarchivados y eliminado de la colección original');
       
       // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
@@ -4096,19 +4101,20 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         ...modalAccionesPedido.pedido,
         estado: 'No Hubo Unidad Disponible',
         fechaCancelacion: fechaActual,
+        fechaCreacion: fechaActual,
         motivoCancelacion: 'No hubo unidad disponible para asignar',
         fechaRegistroCancelacion: fechaActual,
-        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        docIdOriginal: modalAccionesPedido.pedido.id
       };
 
-      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
-      await setDoc(doc(db, rutaTodosLosViajes), viajeCanceladoData);
+      // Guardar en pedidosarchivados
+      await setDoc(doc(db, 'pedidosarchivados', modalAccionesPedido.pedido.id), viajeCanceladoData);
 
       // Eliminar el documento original de la colección
       await deleteDoc(pedidoRef);
 
-      console.log('✅ Pedido marcado como no hubo unidad disponible, guardado en todosLosViajes y eliminado de la colección original');
+      console.log('✅ Pedido marcado como no hubo unidad disponible, guardado en pedidosarchivados y eliminado de la colección original');
       
       // Actualizar contadores específicos
       await actualizarContadorReporte('viajesCancelados');
@@ -4223,20 +4229,21 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
           ...modalAccionesPedido.pedido,
           estado: nuevoEstado,
           fechaFinalizacion: fechaActual,
+          fechaCreacion: fechaActual,
           motivoFinalizacion: nuevoEstado === 'Cancelado' ? 'Pedido cancelado' : 
                              nuevoEstado === 'Rechazado' ? 'Pedido rechazado' : 
                              'Pedido finalizado',
-          fechaRegistroFinalizacion: fechaActual
+          fechaRegistroFinalizacion: fechaActual,
+          docIdOriginal: modalAccionesPedido.pedido.id
         };
 
-        // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-        const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
-        await setDoc(doc(db, rutaTodosLosViajes), viajeData);
+        // Guardar en pedidosarchivados
+        await setDoc(doc(db, 'pedidosarchivados', modalAccionesPedido.pedido.id), viajeData);
 
         // Eliminar el documento original de la colección
         await deleteDoc(pedidoRef);
 
-        console.log(`✅ Pedido ${nuevoEstado.toLowerCase()}, guardado en todosLosViajes y eliminado de la colección original`);
+        console.log(`✅ Pedido ${nuevoEstado.toLowerCase()}, guardado en pedidosarchivados y eliminado de la colección original`);
       } else {
         console.log(`✅ Estado del pedido cambiado a: ${nuevoEstado}`);
       }
@@ -4269,20 +4276,21 @@ function TaxiForm({ operadorAutenticado, setOperadorAutenticado, reporteDiario, 
         pedido: 'Finalizado',
         fechaFinalizacion: fechaActual,
         fechaRegistroFinalizacion: fechaActual,
+        fechaCreacion: fechaActual,
         motivoFinalizacion: 'Pedido completado exitosamente',
         esViajeFinalizado: true,
         colorFondo: '#dbeafe', // Color de fondo azul claro para viajes finalizados
-        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador'
+        operadora: operadorAutenticado ? operadorAutenticado.nombre : 'Sin operador',
+        docIdOriginal: modalAccionesPedido.pedido.id
       };
 
-      // Crear la ruta: todosLosViajes/DD-MM-YYYY/viajes/ID
-      const rutaTodosLosViajes = `todosLosViajes/${fechaFormateada}/viajes/${modalAccionesPedido.pedido.id}`;
-      await setDoc(doc(db, rutaTodosLosViajes), viajeFinalizadoData);
+      // Guardar en pedidosarchivados
+      await setDoc(doc(db, 'pedidosarchivados', modalAccionesPedido.pedido.id), viajeFinalizadoData);
 
       // Eliminar el documento original de la colección
       await deleteDoc(pedidoRef);
 
-      console.log(`✅ Pedido finalizado y guardado en todosLosViajes: ${rutaTodosLosViajes}`);
+      console.log(`✅ Pedido finalizado y guardado en pedidosarchivados: ${modalAccionesPedido.pedido.id}`);
       
       setModal({ open: true, success: true, message: 'Pedido finalizado exitosamente.' });
       
