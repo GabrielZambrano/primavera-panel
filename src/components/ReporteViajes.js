@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { collection, getDocs } from 'firebase/firestore';
 import { db } from '../firebaseConfig';
 import * as XLSX from 'xlsx';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 function obtenerFechaActual() {
   const fecha = new Date();
@@ -24,12 +26,11 @@ function ReporteViajes() {
   const [mostrarModalViajes, setMostrarModalViajes] = useState(false);
   const [mostrarTodosLosViajes, setMostrarTodosLosViajes] = useState(false);
   const [todosLosViajes, setTodosLosViajes] = useState([]);
+  const [busquedaUnidad, setBusquedaUnidad] = useState('');
 
-  // Establecer fechas por defecto (últimos 30 días)
+  // Establecer fechas por defecto (solo el día actual)
   useEffect(() => {
     const hoy = new Date();
-    const hace30Dias = new Date();
-    hace30Dias.setDate(hace30Dias.getDate() - 30);
     
     const formatoFecha = (fecha) => {
       const año = fecha.getFullYear();
@@ -38,7 +39,7 @@ function ReporteViajes() {
       return `${año}-${mes}-${dia}`;
     };
     
-    setFechaInicio(formatoFecha(hace30Dias));
+    setFechaInicio(formatoFecha(hoy));
     setFechaFin(formatoFecha(hoy));
   }, []);
 
@@ -102,6 +103,21 @@ function ReporteViajes() {
   // Helper para obtener nombre del conductor (prioridad: nombreConductor, nombre)
   const obtenerNombreConductor = (v) => {
     return v?.nombreConductor || v?.nombre || '—';
+  };
+
+  // Función para identificar la base según el teléfono
+  const obtenerBasePorTelefono = (telefono) => {
+    if (!telefono) return null;
+    const telefonoStr = telefono.toString().trim();
+    
+    if (telefonoStr === '3243000' || telefonoStr.includes('3243000')) {
+      return 'base5';
+    } else if (telefonoStr === '7777777' || telefonoStr.includes('7777777')) {
+      return 'base0';
+    } else if (telefonoStr === '8888888' || telefonoStr.includes('8888888')) {
+      return 'base8';
+    }
+    return null;
   };
 
   // Helper para verificar si una fecha está en el rango
@@ -179,26 +195,42 @@ function ReporteViajes() {
         return unidad && unidad !== '—' && unidad !== '';
       });
 
-      // Agrupar por unidad y contar carreras, incluyendo nombre del conductor
+      // Agrupar por unidad y contar carreras, incluyendo nombre del conductor y bases
       const unidadesMap = new Map();
       
       viajesConUnidad.forEach(v => {
         const unidad = obtenerUnidad(v);
         const nombreConductor = obtenerNombreConductor(v);
+        const telefono = obtenerTelefono(v);
+        const base = obtenerBasePorTelefono(telefono);
         
         if (unidad && unidad !== '—' && unidad !== '') {
           if (unidadesMap.has(unidad)) {
             const datosUnidad = unidadesMap.get(unidad);
+            const nuevasBases = { ...datosUnidad.bases };
+            
+            // Incrementar contador de base si aplica
+            if (base) {
+              nuevasBases[base] = (nuevasBases[base] || 0) + 1;
+            }
+            
             unidadesMap.set(unidad, {
               cantidad: datosUnidad.cantidad + 1,
               conductor: nombreConductor !== '—' ? nombreConductor : datosUnidad.conductor,
-              viajes: [...datosUnidad.viajes, v]
+              viajes: [...datosUnidad.viajes, v],
+              bases: nuevasBases
             });
           } else {
+            const nuevasBases = { base5: 0, base0: 0, base8: 0 };
+            if (base) {
+              nuevasBases[base] = 1;
+            }
+            
             unidadesMap.set(unidad, {
               cantidad: 1,
               conductor: nombreConductor,
-              viajes: [v]
+              viajes: [v],
+              bases: nuevasBases
             });
           }
         }
@@ -216,6 +248,25 @@ function ReporteViajes() {
             fecha: formatearFecha(obtenerFechaViaje(viaje))
           });
         });
+      });
+
+      // Filtrar reservas para el total
+      const reservas = viajesConUnidad.filter(v => {
+        const tipoPedido = (v.tipoPedido || '').toString().toLowerCase();
+        return tipoPedido === 'reserva';
+      });
+
+      // Calcular totales de reservas por base
+      let reservasBase5 = 0;
+      let reservasBase0 = 0;
+      let reservasBase8 = 0;
+      
+      reservas.forEach(v => {
+        const telefono = obtenerTelefono(v);
+        const base = obtenerBasePorTelefono(telefono);
+        if (base === 'base5') reservasBase5++;
+        else if (base === 'base0') reservasBase0++;
+        else if (base === 'base8') reservasBase8++;
       });
 
       // Agrupar para mostrar resumen (unidad, conductor más frecuente, cantidad)
@@ -241,10 +292,26 @@ function ReporteViajes() {
             unidad,
             cantidad: datos.cantidad,
             conductor: conductorPrincipal,
-            viajes: datos.viajes
+            viajes: datos.viajes,
+            base5: datos.bases?.base5 || 0,
+            base0: datos.bases?.base0 || 0,
+            base8: datos.bases?.base8 || 0
           };
         })
         .sort((a, b) => b.cantidad - a.cantidad);
+
+      // Agregar fila de reservas al inicio si hay reservas
+      if (reservas.length > 0) {
+        resumenUnidades.unshift({
+          unidad: '10300',
+          cantidad: reservas.length,
+          conductor: 'Todas las Reservas',
+          viajes: reservas,
+          base5: reservasBase5,
+          base0: reservasBase0,
+          base8: reservasBase8
+        });
+      }
 
       // Actualizar resumen
       const aceptados = viajesConUnidad.filter(v => v.estado === 'Aceptado' || v.estado === 'Finalizado' || v.estado === 'finalizado').length;
@@ -253,18 +320,25 @@ function ReporteViajes() {
       // Guardar viajes por unidad para el modal
       const viajesPorUnidadMap = {};
       resumenUnidades.forEach(item => {
-        viajesPorUnidadMap[item.unidad] = item.viajes.map(v => ({
-          id: v.id || Math.random().toString(),
-          fecha: formatearFecha(obtenerFechaViaje(v)),
-          telefono: obtenerTelefono(v),
-          direccion: v.direccion || '—',
-          nombreCliente: v.nombreCliente || v.nombre || '—',
-          operador: getOperador(v) || '—',
-          conductor: obtenerNombreConductor(v),
-          estado: v.estado || '—',
-          valor: v.valor || '—',
-          tipoPedido: v.tipoPedido || '—'
-        }));
+        viajesPorUnidadMap[item.unidad] = item.viajes.map(v => {
+          const telefono = obtenerTelefono(v);
+          const base = obtenerBasePorTelefono(telefono);
+          return {
+            id: v.id || Math.random().toString(),
+            fecha: formatearFecha(obtenerFechaViaje(v)),
+            telefono: telefono,
+            direccion: v.direccion || '—',
+            nombreCliente: v.nombreCliente || v.nombre || '—',
+            operador: getOperador(v) || '—',
+            conductor: obtenerNombreConductor(v),
+            estado: v.estado || '—',
+            valor: v.valor || '—',
+            tipoPedido: v.tipoPedido || '—',
+            base5: base === 'base5' ? 1 : 0,
+            base0: base === 'base0' ? 1 : 0,
+            base8: base === 'base8' ? 1 : 0
+          };
+        });
       });
       
       // Preparar todos los viajes para el modal global
@@ -363,6 +437,95 @@ function ReporteViajes() {
     }
   };
 
+  // Función para exportar a PDF
+  const exportarAPDF = () => {
+    try {
+      if (reportePorUnidad.length === 0) {
+        alert('No hay datos para exportar');
+        return;
+      }
+
+      const doc = new jsPDF('landscape'); // Orientación horizontal para más espacio
+      
+      // Título
+      doc.setFontSize(18);
+      doc.text('Reporte Unidades', 14, 15);
+      
+      // Fechas
+      doc.setFontSize(10);
+      doc.text(`Desde: ${fechaInicio} - Hasta: ${fechaFin}`, 14, 22);
+      
+      // Preparar datos para la tabla
+      const tableData = reportePorUnidad.map(item => [
+        item.unidad,
+        item.conductor || '—',
+        item.cantidad.toString(),
+        (item.base5 || 0).toString(),
+        (item.base0 || 0).toString(),
+        (item.base8 || 0).toString()
+      ]);
+
+      // Crear la tabla
+      autoTable(doc, {
+        startY: 28,
+        head: [['Unidad', 'Conductor', 'Cant. Carreras', 'Base 5 (3243000)', 'Base 0 (7777777)', 'Base 8 (8888888)']],
+        body: tableData,
+        theme: 'grid',
+        styles: {
+          fontSize: 8,
+          cellPadding: 2,
+          overflow: 'linebreak'
+        },
+        headStyles: {
+          fillColor: [107, 114, 128], // Gris
+          textColor: 255,
+          fontStyle: 'bold'
+        },
+        alternateRowStyles: {
+          fillColor: [249, 250, 251] // Gris claro
+        },
+        didParseCell: function (data) {
+          // Resaltar la fila de reservas (10300)
+          if (data.row.index < reportePorUnidad.length && reportePorUnidad[data.row.index]?.unidad === '10300') {
+            data.cell.styles.fillColor = [254, 243, 199]; // Amarillo claro
+            data.cell.styles.textColor = [146, 64, 14]; // Marrón oscuro
+            data.cell.styles.fontStyle = 'bold';
+          }
+        }
+      });
+
+      // Fila de totales
+      const totalCantidad = reportePorUnidad.reduce((sum, item) => sum + item.cantidad, 0);
+      const totalBase5 = reportePorUnidad.reduce((sum, item) => sum + (item.base5 || 0), 0);
+      const totalBase0 = reportePorUnidad.reduce((sum, item) => sum + (item.base0 || 0), 0);
+      const totalBase8 = reportePorUnidad.reduce((sum, item) => sum + (item.base8 || 0), 0);
+      
+      const finalY = doc.lastAutoTable?.finalY || 28;
+      autoTable(doc, {
+        startY: finalY + 5,
+        body: [
+          ['TOTAL', '—', totalCantidad.toString(), totalBase5.toString(), totalBase0.toString(), totalBase8.toString()]
+        ],
+        theme: 'grid',
+        styles: {
+          fontSize: 9,
+          fontStyle: 'bold',
+          fillColor: [245, 245, 245], // Gris claro
+          textColor: [31, 41, 55] // Gris oscuro
+        }
+      });
+
+      // Guardar el PDF
+      const hoyISO = new Date().toISOString().split('T')[0];
+      doc.save(`reporte_unidades_${hoyISO}.pdf`);
+      
+      console.log('✅ PDF exportado exitosamente');
+    } catch (error) {
+      console.error('❌ Error al exportar PDF:', error);
+      alert('Error al exportar el PDF: ' + error.message);
+    }
+  };
+
   return (
     <div className="reporte-viajes">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '1rem' }}>
@@ -396,6 +559,22 @@ function ReporteViajes() {
                 borderRadius: '6px',
                 fontSize: '14px',
                 cursor: 'pointer'
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+            <label style={{ fontSize: '14px', fontWeight: 'bold', color: '#374151' }}>🔍 Buscar Unidad:</label>
+            <input
+              type="text"
+              value={busquedaUnidad}
+              onChange={(e) => setBusquedaUnidad(e.target.value)}
+              placeholder="Ej: 593, 45, 554..."
+              style={{
+                padding: '8px 12px',
+                border: '1px solid #d1d5db',
+                borderRadius: '6px',
+                fontSize: '14px',
+                width: '150px'
               }}
             />
           </div>
@@ -459,6 +638,36 @@ function ReporteViajes() {
           >
             📥 Exportar a Excel
           </button>
+          <button
+            onClick={exportarAPDF}
+            disabled={reportePorUnidad.length === 0 || cargando}
+            style={{
+              background: reportePorUnidad.length === 0 || cargando ? '#9ca3af' : '#dc2626',
+              color: 'white',
+              padding: '10px 20px',
+              border: 'none',
+              borderRadius: '8px',
+              cursor: reportePorUnidad.length === 0 || cargando ? 'not-allowed' : 'pointer',
+              fontSize: '14px',
+              fontWeight: 'bold',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              transition: 'background 0.2s'
+            }}
+            onMouseEnter={(e) => {
+              if (reportePorUnidad.length > 0 && !cargando) {
+                e.target.style.background = '#b91c1c';
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (reportePorUnidad.length > 0 && !cargando) {
+                e.target.style.background = '#dc2626';
+              }
+            }}
+          >
+            📄 Exportar a PDF
+          </button>
         </div>
       </div>
       
@@ -499,28 +708,42 @@ function ReporteViajes() {
               background: 'white',
               borderRadius: '8px',
               border: '1px solid #e5e7eb',
-              overflow: 'hidden',
-              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)'
+              overflow: 'auto',
+              boxShadow: '0 1px 3px rgba(0, 0, 0, 0.1)',
+              maxHeight: 'calc(100vh - 300px)'
             }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
-                <thead>
+                <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
                   <tr style={{ background: '#f5f5f5' }}>
                     <th style={{ padding: '15px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Unidad</th>
                     <th style={{ padding: '15px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Conductor</th>
                     <th style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Cantidad de Carreras</th>
+                    <th style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb', background: '#f5f5f5' }}>Base 5<br/>(3243000)<br/><small style={{ fontSize: '11px', color: '#6b7280' }}>base 5</small></th>
+                    <th style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb', background: '#f5f5f5' }}>Base 0<br/>(7777777)<br/><small style={{ fontSize: '11px', color: '#6b7280' }}>aire</small></th>
+                    <th style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb', background: '#f5f5f5' }}>Base 8<br/>(8888888)<br/><small style={{ fontSize: '11px', color: '#6b7280' }}>base 8</small></th>
                     <th style={{ padding: '15px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Acciones</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {reportePorUnidad.map((item, idx) => (
-                    <tr key={item.unidad} style={{ 
-                      borderBottom: '1px solid #e5e7eb',
-                      backgroundColor: idx % 2 === 0 ? '#ffffff' : '#f9fafb',
-                      transition: 'background 0.2s'
-                    }}
-                    onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#f3f4f6'}
-                    onMouseLeave={(e) => e.currentTarget.style.backgroundColor = idx % 2 === 0 ? '#ffffff' : '#f9fafb'}>
-                      <td style={{ padding: '15px', fontWeight: 'bold', fontSize: '16px', color: '#1f2937' }}>
+                  {reportePorUnidad
+                    .filter(item => {
+                      if (!busquedaUnidad.trim()) return true;
+                      const unidadStr = item.unidad?.toString().toLowerCase() || '';
+                      const busquedaStr = busquedaUnidad.trim().toLowerCase();
+                      return unidadStr.includes(busquedaStr);
+                    })
+                    .map((item, idx) => {
+                      const esReserva = item.unidad === '10300';
+                      return (
+                      <tr key={item.unidad} style={{ 
+                        borderBottom: '1px solid #e5e7eb',
+                        backgroundColor: esReserva ? '#fef3c7' : (idx % 2 === 0 ? '#ffffff' : '#f9fafb'),
+                        transition: 'background 0.2s',
+                        borderTop: esReserva ? '3px solid #f59e0b' : 'none'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = esReserva ? '#fde68a' : '#f3f4f6'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = esReserva ? '#fef3c7' : (idx % 2 === 0 ? '#ffffff' : '#f9fafb')}>
+                      <td style={{ padding: '15px', fontWeight: 'bold', fontSize: '16px', color: esReserva ? '#92400e' : '#1f2937' }}>
                         {item.unidad}
                       </td>
                       <td style={{ padding: '15px', color: '#374151', fontSize: '15px' }}>
@@ -538,6 +761,48 @@ function ReporteViajes() {
                           minWidth: '50px'
                         }}>
                           {item.cantidad}
+                        </span>
+                      </td>
+                      <td style={{ padding: '15px', textAlign: 'center' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          background: '#8b5cf6',
+                          color: 'white',
+                          padding: '6px 12px',
+                          borderRadius: '16px',
+                          fontSize: '14px',
+                          fontWeight: 'bold',
+                          minWidth: '40px'
+                        }}>
+                          {item.base5 || 0}
+                        </span>
+                      </td>
+                      <td style={{ padding: '15px', textAlign: 'center' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          background: '#f59e0b',
+                          color: 'white',
+                          padding: '6px 12px',
+                          borderRadius: '16px',
+                          fontSize: '14px',
+                          fontWeight: 'bold',
+                          minWidth: '40px'
+                        }}>
+                          {item.base0 || 0}
+                        </span>
+                      </td>
+                      <td style={{ padding: '15px', textAlign: 'center' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          background: '#10b981',
+                          color: 'white',
+                          padding: '6px 12px',
+                          borderRadius: '16px',
+                          fontSize: '14px',
+                          fontWeight: 'bold',
+                          minWidth: '40px'
+                        }}>
+                          {item.base8 || 0}
                         </span>
                       </td>
                       <td style={{ padding: '15px', textAlign: 'center' }}>
@@ -564,7 +829,8 @@ function ReporteViajes() {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                   {/* Fila de total */}
                   <tr style={{ 
                     background: '#f5f5f5',
@@ -588,7 +854,77 @@ function ReporteViajes() {
                         fontWeight: 'bold',
                         minWidth: '50px'
                       }}>
-                        {reportePorUnidad.reduce((sum, item) => sum + item.cantidad, 0)}
+                        {reportePorUnidad
+                          .filter(item => {
+                            if (!busquedaUnidad.trim()) return true;
+                            const unidadStr = item.unidad?.toString().toLowerCase() || '';
+                            const busquedaStr = busquedaUnidad.trim().toLowerCase();
+                            return unidadStr.includes(busquedaStr);
+                          })
+                          .reduce((sum, item) => sum + item.cantidad, 0)}
+                      </span>
+                    </td>
+                    <td style={{ padding: '15px', textAlign: 'center' }}>
+                      <span style={{
+                        display: 'inline-block',
+                        background: '#8b5cf6',
+                        color: 'white',
+                        padding: '6px 12px',
+                        borderRadius: '16px',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        minWidth: '40px'
+                      }}>
+                        {reportePorUnidad
+                          .filter(item => {
+                            if (!busquedaUnidad.trim()) return true;
+                            const unidadStr = item.unidad?.toString().toLowerCase() || '';
+                            const busquedaStr = busquedaUnidad.trim().toLowerCase();
+                            return unidadStr.includes(busquedaStr);
+                          })
+                          .reduce((sum, item) => sum + (item.base5 || 0), 0)}
+                      </span>
+                    </td>
+                    <td style={{ padding: '15px', textAlign: 'center' }}>
+                      <span style={{
+                        display: 'inline-block',
+                        background: '#f59e0b',
+                        color: 'white',
+                        padding: '6px 12px',
+                        borderRadius: '16px',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        minWidth: '40px'
+                      }}>
+                        {reportePorUnidad
+                          .filter(item => {
+                            if (!busquedaUnidad.trim()) return true;
+                            const unidadStr = item.unidad?.toString().toLowerCase() || '';
+                            const busquedaStr = busquedaUnidad.trim().toLowerCase();
+                            return unidadStr.includes(busquedaStr);
+                          })
+                          .reduce((sum, item) => sum + (item.base0 || 0), 0)}
+                      </span>
+                    </td>
+                    <td style={{ padding: '15px', textAlign: 'center' }}>
+                      <span style={{
+                        display: 'inline-block',
+                        background: '#10b981',
+                        color: 'white',
+                        padding: '6px 12px',
+                        borderRadius: '16px',
+                        fontSize: '14px',
+                        fontWeight: 'bold',
+                        minWidth: '40px'
+                      }}>
+                        {reportePorUnidad
+                          .filter(item => {
+                            if (!busquedaUnidad.trim()) return true;
+                            const unidadStr = item.unidad?.toString().toLowerCase() || '';
+                            const busquedaStr = busquedaUnidad.trim().toLowerCase();
+                            return unidadStr.includes(busquedaStr);
+                          })
+                          .reduce((sum, item) => sum + (item.base8 || 0), 0)}
                       </span>
                     </td>
                     <td style={{ padding: '15px' }}>
@@ -679,7 +1015,9 @@ function ReporteViajes() {
                     <th style={{ padding: '12px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Operador</th>
                     <th style={{ padding: '12px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Conductor</th>
                     <th style={{ padding: '12px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Estado</th>
-                    <th style={{ padding: '12px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Valor</th>
+                    <th style={{ padding: '12px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb', background: '#f5f5f5' }}>Base 5<br/>(3243000)</th>
+                    <th style={{ padding: '12px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb', background: '#f5f5f5' }}>Base 0<br/>(7777777)</th>
+                    <th style={{ padding: '12px', textAlign: 'center', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb', background: '#f5f5f5' }}>Base 8<br/>(8888888)</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -729,8 +1067,56 @@ function ReporteViajes() {
                           {viaje.estado}
                         </span>
                       </td>
-                      <td style={{ padding: '12px', color: '#374151' }}>
-                        {viaje.valor}
+                      <td style={{ padding: '12px', textAlign: 'center' }}>
+                        {viaje.base5 === 1 ? (
+                          <span style={{
+                            display: 'inline-block',
+                            background: '#8b5cf6',
+                            color: 'white',
+                            padding: '4px 8px',
+                            borderRadius: '12px',
+                            fontSize: '12px',
+                            fontWeight: 'bold'
+                          }}>
+                            ✓
+                          </span>
+                        ) : (
+                          <span style={{ color: '#9ca3af' }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>
+                        {viaje.base0 === 1 ? (
+                          <span style={{
+                            display: 'inline-block',
+                            background: '#f59e0b',
+                            color: 'white',
+                            padding: '4px 8px',
+                            borderRadius: '12px',
+                            fontSize: '12px',
+                            fontWeight: 'bold'
+                          }}>
+                            ✓
+                          </span>
+                        ) : (
+                          <span style={{ color: '#9ca3af' }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '12px', textAlign: 'center' }}>
+                        {viaje.base8 === 1 ? (
+                          <span style={{
+                            display: 'inline-block',
+                            background: '#10b981',
+                            color: 'white',
+                            padding: '4px 8px',
+                            borderRadius: '12px',
+                            fontSize: '12px',
+                            fontWeight: 'bold'
+                          }}>
+                            ✓
+                          </span>
+                        ) : (
+                          <span style={{ color: '#9ca3af' }}>—</span>
+                        )}
                       </td>
                     </tr>
                   ))}
@@ -831,7 +1217,6 @@ function ReporteViajes() {
                     <th style={{ padding: '12px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Operador</th>
                     <th style={{ padding: '12px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Conductor</th>
                     <th style={{ padding: '12px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Estado</th>
-                    <th style={{ padding: '12px', textAlign: 'left', fontWeight: 'bold', borderBottom: '2px solid #e5e7eb' }}>Valor</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -883,9 +1268,6 @@ function ReporteViajes() {
                         }}>
                           {viaje.estado}
                         </span>
-                      </td>
-                      <td style={{ padding: '12px', color: '#374151' }}>
-                        {viaje.valor}
                       </td>
                     </tr>
                   ))}
