@@ -8,7 +8,7 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
     { id: 'reportes', label: 'Reportes', icon: '📈' },
     { id: 'pedidos-archivados', label: 'Reporte Unidades', icon: '📋' },
     { id: 'operadores', label: 'Operadores', icon: '👥' },
-    { id: 'whatsapp1', label: 'Whatsapp1', icon: '💬' }
+    { id: 'whatsapp1', label: 'Whatsapp Unidades', icon: '💬' }
   ];
 
   return (
@@ -63,7 +63,7 @@ function Sidebar({ activeSection, setActiveSection, isCollapsed, setIsCollapsed,
             onClick={() => {
               // Para WhatsApp, abrir en ventana nueva
               if (item.id === 'whatsapp1') {
-                window.open('http://5.189.168.188:3020/', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
+                window.open('http://84.46.245.131:3022/', '_blank', 'width=1200,height=800,scrollbars=yes,resizable=yes');
               } else {
               // Cambiar a la sección correspondiente dentro del mismo sistema
               setActiveSection(item.id);
