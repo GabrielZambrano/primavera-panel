@@ -26,6 +26,7 @@ function ReporteViajes() {
   const [mostrarModalViajes, setMostrarModalViajes] = useState(false);
   const [mostrarTodosLosViajes, setMostrarTodosLosViajes] = useState(false);
   const [todosLosViajes, setTodosLosViajes] = useState([]);
+  const [totalCarrerasConDuplicados, setTotalCarrerasConDuplicados] = useState(0);
   const [busquedaUnidad, setBusquedaUnidad] = useState('');
 
   // Establecer fechas por defecto (solo el día actual)
@@ -105,6 +106,10 @@ function ReporteViajes() {
     return v?.nombreConductor || v?.nombre || '—';
   };
 
+  // Helper para obtener operador
+  const getOperador = (v) =>
+    (v?.operador && (v.operador.nombre || v.operador.name)) || v?.operadora || v?.operador || v?.operator || v?.atendidoPor || '';
+
   // Función para identificar la base según el teléfono
   const obtenerBasePorTelefono = (telefono) => {
     if (!telefono) return null;
@@ -143,6 +148,75 @@ function ReporteViajes() {
     }
   };
 
+  // Helper para generar una clave única basada solo en unidad, fecha/hora y teléfono
+  const generarClaveUnica = (viaje) => {
+    const fechaViaje = obtenerFechaViaje(viaje);
+    const unidad = obtenerUnidad(viaje);
+    const telefono = obtenerTelefono(viaje);
+    
+    try {
+      let fechaHoraStr = '';
+      if (fechaViaje) {
+        let fecha;
+        if (fechaViaje.toDate) {
+          fecha = fechaViaje.toDate();
+        } else if (typeof fechaViaje === 'string' || typeof fechaViaje === 'number') {
+          fecha = new Date(fechaViaje);
+        }
+        
+        if (fecha && !isNaN(fecha.getTime())) {
+          // Formato: YYYY-MM-DDTHH:mm (sin segundos para agrupar por minuto)
+          const año = fecha.getFullYear();
+          const mes = String(fecha.getMonth() + 1).padStart(2, '0');
+          const dia = String(fecha.getDate()).padStart(2, '0');
+          const horas = String(fecha.getHours()).padStart(2, '0');
+          const minutos = String(fecha.getMinutes()).padStart(2, '0');
+          fechaHoraStr = `${año}-${mes}-${dia}T${horas}:${minutos}`;
+        }
+      }
+      
+      // Normalizar unidad (convertir a string y limpiar)
+      const unidadStr = String(unidad || '').trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+      
+      // Normalizar teléfono (remover espacios y caracteres especiales, solo números)
+      // Si es '—' o vacío, usar cadena vacía para que coincidan
+      let telefonoStr = '';
+      if (telefono && telefono !== '—' && telefono !== '-') {
+        telefonoStr = String(telefono).trim().replace(/\D/g, '');
+      }
+      
+      // Solo usar unidad, fecha/hora y teléfono para identificar duplicados
+      const clave = `${fechaHoraStr}_${unidadStr}_${telefonoStr}`;
+      return clave;
+    } catch (error) {
+      console.error('Error al generar clave única:', error);
+      return `${viaje.id || Math.random()}`;
+    }
+  };
+
+  // Función para eliminar duplicados pero mantener el conteo
+  const eliminarDuplicadosMantenerConteo = (viajes) => {
+    const viajesUnicos = new Map();
+    const conteoDuplicados = new Map();
+    
+    viajes.forEach(viaje => {
+      const clave = generarClaveUnica(viaje);
+      
+      if (!viajesUnicos.has(clave)) {
+        viajesUnicos.set(clave, viaje);
+        conteoDuplicados.set(clave, 1);
+      } else {
+        // Incrementar contador de duplicados
+        conteoDuplicados.set(clave, conteoDuplicados.get(clave) + 1);
+      }
+    });
+    
+    return {
+      viajesUnicos: Array.from(viajesUnicos.values()),
+      conteoDuplicados: conteoDuplicados
+    };
+  };
+
   const cargarViajes = async () => {
     try {
       setCargando(true);
@@ -171,8 +245,16 @@ function ReporteViajes() {
         }
       });
 
+      // Eliminar duplicados basados en unidad, teléfono, dirección, nombre cliente, operador y conductor
+      // pero mantener el conteo para las estadísticas
+      const { viajesUnicos, conteoDuplicados } = eliminarDuplicadosMantenerConteo(viajesCargados);
+      
+      console.log('📊 Total viajes cargados:', viajesCargados.length);
+      console.log('✅ Viajes únicos después de eliminar duplicados:', viajesUnicos.length);
+      console.log('🔄 Duplicados encontrados:', viajesCargados.length - viajesUnicos.length);
+      
       // Ordenar por fecha de creación (más recientes primero)
-      viajesCargados.sort((a, b) => {
+      viajesUnicos.sort((a, b) => {
         const fechaA = obtenerFechaViaje(a);
         const fechaB = obtenerFechaViaje(b);
         
@@ -190,46 +272,65 @@ function ReporteViajes() {
       });
 
       // Filtrar viajes que no tienen unidad
-      const viajesConUnidad = viajesCargados.filter(v => {
+      const viajesConUnidad = viajesUnicos.filter(v => {
         const unidad = obtenerUnidad(v);
         return unidad && unidad !== '—' && unidad !== '';
       });
 
       // Agrupar por unidad y contar carreras, incluyendo nombre del conductor y bases
+      // Usar el conteo de duplicados para las estadísticas
       const unidadesMap = new Map();
+      const clavesPorUnidad = new Map(); // Para rastrear claves únicas por unidad
       
       viajesConUnidad.forEach(v => {
         const unidad = obtenerUnidad(v);
         const nombreConductor = obtenerNombreConductor(v);
         const telefono = obtenerTelefono(v);
         const base = obtenerBasePorTelefono(telefono);
+        const clave = generarClaveUnica(v);
+        const cantidadDuplicados = conteoDuplicados.get(clave) || 1; // Contar duplicados
         
         if (unidad && unidad !== '—' && unidad !== '') {
+          // Inicializar Set de claves para esta unidad si no existe
+          if (!clavesPorUnidad.has(unidad)) {
+            clavesPorUnidad.set(unidad, new Set());
+          }
+          
+          const clavesUnidad = clavesPorUnidad.get(unidad);
+          const esDuplicadoEnUnidad = clavesUnidad.has(clave);
+          
           if (unidadesMap.has(unidad)) {
             const datosUnidad = unidadesMap.get(unidad);
             const nuevasBases = { ...datosUnidad.bases };
             
-            // Incrementar contador de base si aplica
+            // Solo agregar el viaje a la lista si no es duplicado dentro de esta unidad
+            if (!esDuplicadoEnUnidad) {
+              clavesUnidad.add(clave);
+              datosUnidad.viajes.push(v);
+            }
+            
+            // Incrementar contador de base si aplica (sumar cantidad de duplicados)
             if (base) {
-              nuevasBases[base] = (nuevasBases[base] || 0) + 1;
+              nuevasBases[base] = (nuevasBases[base] || 0) + cantidadDuplicados;
             }
             
             unidadesMap.set(unidad, {
-              cantidad: datosUnidad.cantidad + 1,
+              cantidad: datosUnidad.cantidad + cantidadDuplicados, // Sumar duplicados al conteo
               conductor: nombreConductor !== '—' ? nombreConductor : datosUnidad.conductor,
-              viajes: [...datosUnidad.viajes, v],
+              viajes: datosUnidad.viajes, // Solo viajes únicos dentro de la unidad
               bases: nuevasBases
             });
           } else {
             const nuevasBases = { base5: 0, base0: 0, base8: 0 };
             if (base) {
-              nuevasBases[base] = 1;
+              nuevasBases[base] = cantidadDuplicados; // Usar cantidad de duplicados
             }
             
+            clavesUnidad.add(clave);
             unidadesMap.set(unidad, {
-              cantidad: 1,
+              cantidad: cantidadDuplicados, // Usar cantidad de duplicados
               conductor: nombreConductor,
-              viajes: [v],
+              viajes: [v], // Solo guardar el viaje único
               bases: nuevasBases
             });
           }
@@ -250,23 +351,25 @@ function ReporteViajes() {
         });
       });
 
-      // Filtrar reservas para el total
+      // Filtrar reservas para el total (usar viajes únicos pero contar duplicados)
       const reservas = viajesConUnidad.filter(v => {
         const tipoPedido = (v.tipoPedido || '').toString().toLowerCase();
         return tipoPedido === 'reserva';
       });
 
-      // Calcular totales de reservas por base
+      // Calcular totales de reservas por base (contando duplicados)
       let reservasBase5 = 0;
       let reservasBase0 = 0;
       let reservasBase8 = 0;
       
       reservas.forEach(v => {
+        const clave = generarClaveUnica(v);
+        const cantidadDuplicados = conteoDuplicados.get(clave) || 1;
         const telefono = obtenerTelefono(v);
         const base = obtenerBasePorTelefono(telefono);
-        if (base === 'base5') reservasBase5++;
-        else if (base === 'base0') reservasBase0++;
-        else if (base === 'base8') reservasBase8++;
+        if (base === 'base5') reservasBase5 += cantidadDuplicados;
+        else if (base === 'base0') reservasBase0 += cantidadDuplicados;
+        else if (base === 'base8') reservasBase8 += cantidadDuplicados;
       });
 
       // Agrupar para mostrar resumen (unidad, conductor más frecuente, cantidad)
@@ -290,9 +393,9 @@ function ReporteViajes() {
 
           return {
             unidad,
-            cantidad: datos.cantidad,
+            cantidad: datos.cantidad, // Esta cantidad incluye duplicados
             conductor: conductorPrincipal,
-            viajes: datos.viajes,
+            viajes: datos.viajes, // Solo viajes únicos para mostrar
             base5: datos.bases?.base5 || 0,
             base0: datos.bases?.base0 || 0,
             base8: datos.bases?.base8 || 0
@@ -300,22 +403,41 @@ function ReporteViajes() {
         })
         .sort((a, b) => b.cantidad - a.cantidad);
 
+      // Calcular cantidad total de reservas contando duplicados
+      let totalReservas = 0;
+      reservas.forEach(v => {
+        const clave = generarClaveUnica(v);
+        totalReservas += conteoDuplicados.get(clave) || 1;
+      });
+
       // Agregar fila de reservas al inicio si hay reservas
       if (reservas.length > 0) {
         resumenUnidades.unshift({
           unidad: '10300',
-          cantidad: reservas.length,
+          cantidad: totalReservas, // Usar total contando duplicados
           conductor: 'Todas las Reservas',
-          viajes: reservas,
+          viajes: reservas, // Solo mostrar viajes únicos
           base5: reservasBase5,
           base0: reservasBase0,
           base8: reservasBase8
         });
       }
 
-      // Actualizar resumen
-      const aceptados = viajesConUnidad.filter(v => v.estado === 'Aceptado' || v.estado === 'Finalizado' || v.estado === 'finalizado').length;
-      const manuales = viajesConUnidad.filter(v => (v.tipoPedido || '').toLowerCase().includes('manual')).length;
+      // Actualizar resumen (contando duplicados)
+      let aceptados = 0;
+      let manuales = 0;
+      
+      viajesConUnidad.forEach(v => {
+        const clave = generarClaveUnica(v);
+        const cantidadDuplicados = conteoDuplicados.get(clave) || 1;
+        
+        if (v.estado === 'Aceptado' || v.estado === 'Finalizado' || v.estado === 'finalizado') {
+          aceptados += cantidadDuplicados;
+        }
+        if ((v.tipoPedido || '').toLowerCase().includes('manual')) {
+          manuales += cantidadDuplicados;
+        }
+      });
       
       // Guardar viajes por unidad para el modal
       const viajesPorUnidadMap = {};
@@ -356,10 +478,16 @@ function ReporteViajes() {
         tipoPedido: v.tipoPedido || '—'
       }));
 
+      // Calcular el total de carreras incluyendo duplicados (para estadísticas)
+      const totalConDuplicados = resumenUnidades.reduce((sum, item) => sum + item.cantidad, 0);
+      // Calcular el total de viajes únicos (para mostrar en resumen)
+      const totalUnicos = todosLosViajesDetalle.length;
+      
       setViajes(viajesConUnidad);
       setReportePorUnidad(resumenUnidades);
       setViajesPorUnidad(viajesPorUnidadMap);
       setTodosLosViajes(todosLosViajesDetalle);
+      setTotalCarrerasConDuplicados(totalConDuplicados);
       setResumen({ aceptados, manuales });
       
     } catch (error) {
@@ -385,9 +513,6 @@ function ReporteViajes() {
 
   const getComment = (v) =>
     v?.comment ?? v?.comentario ?? v?.comentarios ?? v?.observacion ?? v?.observaciones ?? (v?.feedback && (v.feedback.comment ?? v.feedback.comentario ?? v.feedback.observacion)) ?? '';
-
-  const getOperador = (v) =>
-    (v?.operador && (v.operador.nombre || v.operador.name)) || v?.operadora || v?.operador || v?.operator || v?.atendidoPor || '';
 
   const exportarAExcel = () => {
     try {
@@ -854,14 +979,13 @@ function ReporteViajes() {
                         fontWeight: 'bold',
                         minWidth: '50px'
                       }}>
-                        {reportePorUnidad
-                          .filter(item => {
+                        {todosLosViajes
+                          .filter(viaje => {
                             if (!busquedaUnidad.trim()) return true;
-                            const unidadStr = item.unidad?.toString().toLowerCase() || '';
+                            const unidadStr = viaje.unidad?.toString().toLowerCase() || '';
                             const busquedaStr = busquedaUnidad.trim().toLowerCase();
                             return unidadStr.includes(busquedaStr);
-                          })
-                          .reduce((sum, item) => sum + item.cantidad, 0)}
+                          }).length}
                       </span>
                     </td>
                     <td style={{ padding: '15px', textAlign: 'center' }}>
@@ -1284,7 +1408,7 @@ function ReporteViajes() {
               fontSize: '16px',
               color: '#1f2937'
             }}>
-              Total de viajes: {todosLosViajes.length}
+              Total de viajes: {totalCarrerasConDuplicados} (mostrando {todosLosViajes.length} únicos)
             </div>
           </div>
         </div>
