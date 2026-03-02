@@ -9679,7 +9679,12 @@ function ConductoresContent() {
   const [viewMode, setViewMode] = useState('cards'); // 'cards' o 'table'
   const [searchTerm, setSearchTerm] = useState('');
   const [searchBy, setSearchBy] = useState('nombre'); // 'nombre' o 'unidad'
+  const [activandoTaximetro, setActivandoTaximetro] = useState(false);
   const fileInputRef = useRef(null);
+  const mostrarBtnTaximetroTodosDevLocal =
+    process.env.NODE_ENV === 'development' &&
+    typeof window !== 'undefined' &&
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
   // Modal para cambio de estatus con motivo (Conductores)
   const [modalCambioEstatus, setModalCambioEstatus] = useState({
@@ -9855,7 +9860,7 @@ function ConductoresContent() {
   const handleEdit = (index) => {
     const conductor = conductoresFiltrados[index];
     setEditIndex(conductor.id); // Usar el ID en lugar del índice
-    setEditData({ ...conductor });
+    setEditData({ ...conductor, btn_taximetro: conductor.btn_taximetro ?? true });
   };
 
   const handleCancel = () => {
@@ -9870,8 +9875,9 @@ function ConductoresContent() {
   };
 
   const handleChange = (e) => {
-    const { name, value } = e.target;
-    setEditData(prev => ({ ...prev, [name]: value }));
+    const { name, type, value, checked } = e.target;
+    const nextValue = type === 'checkbox' ? checked : value;
+    setEditData(prev => ({ ...prev, [name]: nextValue }));
   };
 
   const handleSave = async () => {
@@ -9899,6 +9905,15 @@ function ConductoresContent() {
       
       // Preparar datos para guardar en Firestore
       const datosParaGuardar = { ...editData };
+
+      // Default: btn_taximetro activo si no existe (y normalizar a boolean)
+      if (datosParaGuardar.btn_taximetro === undefined || datosParaGuardar.btn_taximetro === null) {
+        datosParaGuardar.btn_taximetro = true;
+      } else if (typeof datosParaGuardar.btn_taximetro === 'string') {
+        datosParaGuardar.btn_taximetro = datosParaGuardar.btn_taximetro.toLowerCase() === 'true';
+      } else {
+        datosParaGuardar.btn_taximetro = Boolean(datosParaGuardar.btn_taximetro);
+      }
       
       // Validar y limpiar la foto antes de guardar
       if (datosParaGuardar.foto) {
@@ -10288,6 +10303,36 @@ function ConductoresContent() {
       alert(`❌ ${mensaje}\n\nCódigo de error: ${error.code}\n\nVerifica:\n1. Reglas de Storage\n2. Dominios autorizados\n3. Configuración del proyecto`);
     }
   };
+
+  const activarBtnTaximetroParaTodos = async () => {
+    const ok = window.confirm('¿Activar "btn_taximetro" (Taxímetro) para TODOS los conductores?');
+    if (!ok) return;
+
+    setActivandoTaximetro(true);
+    try {
+      const snapshot = await getDocs(collection(db, 'conductores'));
+      const docs = snapshot.docs;
+      const docsAActualizar = docs.filter(d => d.data()?.btn_taximetro !== true);
+
+      if (docsAActualizar.length === 0) {
+        alert('✅ Ya está activado el Taxímetro (btn_taximetro) para todos.');
+        return;
+      }
+
+      await Promise.all(docsAActualizar.map(d => updateDoc(d.ref, { btn_taximetro: true })));
+      setConductores(prev => prev.map(c => ({ ...c, btn_taximetro: true })));
+
+      alert(`✅ Taxímetro activado en ${docsAActualizar.length} conductores.`);
+    } catch (error) {
+      console.error('❌ Error al activar btn_taximetro para todos:', error);
+      alert('❌ No se pudo activar el Taxímetro (btn_taximetro) para todos.');
+    } finally {
+      setActivandoTaximetro(false);
+      try {
+        fetchConductores();
+      } catch {}
+    }
+  };
   return (
     <div style={{ padding: 20 }}>
       <h2 style={{ marginBottom: 20 }}>Gestión de Conductores</h2>
@@ -10386,6 +10431,25 @@ function ConductoresContent() {
           >
             🔍 Diagnosticar
           </button>
+          {mostrarBtnTaximetroTodosDevLocal && (
+            <button
+              onClick={activarBtnTaximetroParaTodos}
+              disabled={activandoTaximetro}
+              style={{
+                background: activandoTaximetro ? '#9ca3af' : '#0ea5e9',
+                color: 'white',
+                border: 'none',
+                borderRadius: 6,
+                padding: '8px 12px',
+                cursor: activandoTaximetro ? 'not-allowed' : 'pointer',
+                fontWeight: 'bold',
+                fontSize: 12
+              }}
+              title='[DEV LOCAL] Activar "btn_taximetro" para todos los conductores'
+            >
+              {activandoTaximetro ? '⏳ Activando...' : '⏱️ Taxímetro (todos)'}
+            </button>
+          )}
         </div>
 
         {/* Controles de búsqueda */}
@@ -10589,6 +10653,22 @@ function ConductoresContent() {
                     <span style={{ flex: 1 }}>{conductor.color || '-'}</span>
                   )}
                 </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <strong style={{ minWidth: 90, textAlign: 'right' }}>Taxímetro:</strong>
+                  {editIndex === conductor.id ? (
+                    <label style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, fontWeight: 'bold', color: '#374151' }}>
+                      <input
+                        type="checkbox"
+                        name="btn_taximetro"
+                        checked={Boolean(editData.btn_taximetro ?? true)}
+                        onChange={handleChange}
+                      />
+                      {Boolean(editData.btn_taximetro ?? true) ? 'Activo' : 'Inactivo'}
+                    </label>
+                  ) : (
+                    <span style={{ flex: 1 }}>{(conductor.btn_taximetro ?? true) ? 'Activo' : 'Inactivo'}</span>
+                  )}
+                </div>
 
               </div>
               {/* Botones de acción y estatus en la misma línea, centrados y del mismo tamaño */}
@@ -10757,6 +10837,15 @@ function ConductoresContent() {
                   }}>
                     🎨 Color
                   </th>
+                  <th style={{
+                    padding: '15px 12px',
+                    textAlign: 'left',
+                    fontWeight: 'bold',
+                    color: '#374151',
+                    borderBottom: '1px solid #e5e7eb'
+                  }}>
+                    ⏱️ Taxímetro
+                  </th>
 
                   <th style={{
                     padding: '15px 12px',
@@ -10872,6 +10961,24 @@ function ConductoresContent() {
                         conductor.color || '-'
                       )}
                     </td>
+                    <td style={{
+                      padding: '12px',
+                      color: '#374151'
+                    }}>
+                      {editIndex === conductor.id ? (
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 'bold' }}>
+                          <input
+                            type="checkbox"
+                            name="btn_taximetro"
+                            checked={Boolean(editData.btn_taximetro ?? true)}
+                            onChange={handleChange}
+                          />
+                          {(Boolean(editData.btn_taximetro ?? true)) ? 'Sí' : 'No'}
+                        </label>
+                      ) : (
+                        (conductor.btn_taximetro ?? true) ? 'Sí' : 'No'
+                      )}
+                    </td>
 
                     <td style={{
                       padding: '12px'
@@ -10892,7 +10999,7 @@ function ConductoresContent() {
                       padding: '12px'
                     }}>
                       <div style={{ display: 'flex', gap: 8 }}>
-                        {editIndex === idx ? (
+                        {editIndex === conductor.id ? (
                           <>
                             <button
                               onClick={handleSave}
